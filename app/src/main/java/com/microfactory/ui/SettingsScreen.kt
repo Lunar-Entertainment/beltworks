@@ -152,7 +152,7 @@ fun SettingsScreen(
                     .padding(12.dp)
             ) {
                 Text(
-                    text = "Leaving this setting on supports the game's development. I strongly appreciate if you leave this setting on, but I also understand turning it off.",
+                    text = "Leaving this setting on supports development.",
                     color = FactoryColors.TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 17.sp
