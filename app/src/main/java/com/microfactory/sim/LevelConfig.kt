@@ -16,7 +16,8 @@ data class LevelConfig(
     val hatches: List<PlacedTile>,
     val rocks: List<GridCoord>,
     val hint: String,
-    val newMechanicBadge: String? = null
+    val newMechanicBadge: String? = null,
+    val isExpert: Boolean = false
 ) {
     fun calculateStars(beltsUsed: Int): Int = when {
         beltsUsed <= parBelts -> 3

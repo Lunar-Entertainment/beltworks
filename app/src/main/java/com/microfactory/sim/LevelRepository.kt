@@ -332,26 +332,59 @@ object LevelRepository {
         )
     )
 
-    val levels: List<LevelConfig> =
+    val standardLevels: List<LevelConfig> =
         coreLevels + LevelPack2.levels + LevelPack3.levels + LevelPack4.levels
+
+    val expertLevels: List<LevelConfig> =
+        LevelPackExpert1.levels + LevelPackExpert2.levels
+
+    val levels: List<LevelConfig> = standardLevels + expertLevels
 
     fun getLevel(id: Int): LevelConfig =
         levels.firstOrNull { it.id == id } ?: levels.first()
 
     /**
-     * Level 1 is always unlocked. Each subsequent level unlocks once all preceding
-     * levels have at least 1 earned star (completed).
+     * Level 1 is always unlocked in Standard Mode. Each subsequent Standard level
+     * unlocks once all preceding Standard levels have at least 1 earned star.
      */
     fun highestUnlockedLevelId(completedLevelIds: Set<Int>): Int {
-        var highest = 1
-        for (level in levels) {
+        var highest = standardLevels.first().id
+        val maxId = standardLevels.last().id
+        for (level in standardLevels) {
             if (level.id <= highest && level.id in completedLevelIds) {
-                highest = (level.id + 1).coerceAtMost(levels.size)
+                highest = (level.id + 1).coerceAtMost(maxId)
             }
         }
         return highest
     }
 
-    fun isLevelUnlocked(levelId: Int, completedLevelIds: Set<Int>): Boolean =
-        levelId <= highestUnlockedLevelId(completedLevelIds)
+    /**
+     * Level 81 is always unlocked in Expert Mode. Each subsequent Expert level
+     * unlocks once all preceding Expert levels have at least 1 earned star.
+     */
+    fun highestUnlockedExpertLevelId(completedLevelIds: Set<Int>): Int {
+        var highest = expertLevels.first().id
+        val maxId = expertLevels.last().id
+        for (level in expertLevels) {
+            if (level.id <= highest && level.id in completedLevelIds) {
+                highest = (level.id + 1).coerceAtMost(maxId)
+            }
+        }
+        return highest
+    }
+
+    fun isLevelUnlocked(levelId: Int, completedLevelIds: Set<Int>): Boolean {
+        val level = levels.firstOrNull { it.id == levelId } ?: return false
+        return if (level.isExpert) {
+            levelId <= highestUnlockedExpertLevelId(completedLevelIds)
+        } else {
+            levelId <= highestUnlockedLevelId(completedLevelIds)
+        }
+    }
+
+    fun nextLevelIdInMode(currentLevel: LevelConfig): Int? {
+        val pool = if (currentLevel.isExpert) expertLevels else standardLevels
+        val idx = pool.indexOfFirst { it.id == currentLevel.id }
+        return if (idx in 0 until pool.lastIndex) pool[idx + 1].id else null
+    }
 }

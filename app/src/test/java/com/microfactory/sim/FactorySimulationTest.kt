@@ -281,11 +281,11 @@ class FactorySimulationTest {
     }
 
     @Test
-    fun allEightyLevelsHaveValidOpenGeometryAndIncreasingProgression() {
+    fun allOneHundredFortyLevelsHaveValidOpenGeometryAndIncreasingProgression() {
         val levels = LevelRepository.levels
-        assertEquals(80, levels.size)
-        assertEquals((1..80).toList(), levels.map { it.id })
-        assertEquals(80, levels.map { it.name }.toSet().size)
+        assertEquals(140, levels.size)
+        assertEquals((1..140).toList(), levels.map { it.id })
+        assertEquals(140, levels.map { it.name }.toSet().size)
 
         for (level in levels) {
             assertTrue("Level ${level.id} width >= 8", level.width >= 8)
@@ -621,9 +621,42 @@ class FactorySimulationTest {
         assertEquals(2, LevelRepository.highestUnlockedLevelId(skipped))
         assertFalse(LevelRepository.isLevelUnlocked(5, skipped))
 
-        val allCompleted = (1..80).toSet()
-        assertEquals(80, LevelRepository.highestUnlockedLevelId(allCompleted))
-        assertTrue(LevelRepository.isLevelUnlocked(80, allCompleted))
+        val allStandardCompleted = (1..80).toSet()
+        assertEquals(80, LevelRepository.highestUnlockedLevelId(allStandardCompleted))
+        assertTrue(LevelRepository.isLevelUnlocked(80, allStandardCompleted))
+
+        // Expert Mode unlocks independently starting at Level 81
+        assertEquals(81, LevelRepository.highestUnlockedExpertLevelId(emptySet()))
+        assertTrue(LevelRepository.isLevelUnlocked(81, emptySet()))
+        assertFalse(LevelRepository.isLevelUnlocked(82, emptySet()))
+
+        val completedExpert = setOf(81, 82)
+        assertEquals(83, LevelRepository.highestUnlockedExpertLevelId(completedExpert))
+        assertTrue(LevelRepository.isLevelUnlocked(83, completedExpert))
+        assertFalse(LevelRepository.isLevelUnlocked(84, completedExpert))
+
+        val allExpertCompleted = (81..140).toSet()
+        assertEquals(140, LevelRepository.highestUnlockedExpertLevelId(allExpertCompleted))
+        assertTrue(LevelRepository.isLevelUnlocked(140, allExpertCompleted))
+
+        assertEquals(null, LevelRepository.nextLevelIdInMode(LevelRepository.getLevel(80)))
+        assertEquals(82, LevelRepository.nextLevelIdInMode(LevelRepository.getLevel(81)))
+        assertEquals(null, LevelRepository.nextLevelIdInMode(LevelRepository.getLevel(140)))
+    }
+
+    @Test
+    fun expertModeHas60LevelsWithNoHintsOrHelp() {
+        assertEquals(80, LevelRepository.standardLevels.size)
+        assertEquals(60, LevelRepository.expertLevels.size)
+        assertEquals(140, LevelRepository.levels.size)
+
+        for (i in 0 until 60) {
+            val level = LevelRepository.expertLevels[i]
+            assertEquals(81 + i, level.id)
+            assertTrue("Level ${level.id} must be expert", level.isExpert)
+            assertEquals("Level ${level.id} must have no hint", "", level.hint)
+            assertEquals("Level ${level.id} must have no mechanic badge", null, level.newMechanicBadge)
+        }
     }
 
     @Test

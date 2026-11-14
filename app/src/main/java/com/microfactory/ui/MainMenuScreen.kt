@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -60,7 +61,7 @@ import kotlin.math.sin
 
 private data class TierFilter(val label: String, val range: IntRange)
 
-private val TIER_FILTERS = listOf(
+private val STANDARD_TIER_FILTERS = listOf(
     TierFilter("All (80)", 1..80),
     TierFilter("1–8 Core", 1..8),
     TierFilter("9–18 Bridge", 9..18),
@@ -70,12 +71,21 @@ private val TIER_FILTERS = listOf(
     TierFilter("63–80 Apex", 63..80)
 )
 
+private val EXPERT_TIER_FILTERS = listOf(
+    TierFilter("All (60)", 81..140),
+    TierFilter("81–95 Blind", 81..95),
+    TierFilter("96–110 Matrix", 96..110),
+    TierFilter("111–125 Vortex", 111..125),
+    TierFilter("126–140 Omega", 126..140)
+)
+
 @Composable
 fun MainMenuScreen(
     levels: List<LevelConfig>,
     records: Map<Int, LevelRecord>,
     continueLevelId: Int,
     highestUnlockedLevelId: Int,
+    highestUnlockedExpertLevelId: Int = 81,
     isMusicEnabled: Boolean,
     currentTrackTitle: String,
     onPlayLevel: (Int) -> Unit,
@@ -84,6 +94,7 @@ fun MainMenuScreen(
     onOpenSettings: () -> Unit
 ) {
     var animPhase by remember { mutableFloatStateOf(0f) }
+    var isExpertMode by remember { mutableStateOf(continueLevelId >= 81) }
     var selectedTierIdx by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
@@ -96,11 +107,23 @@ fun MainMenuScreen(
         }
     }
 
+    val modeLevels = remember(levels, isExpertMode) {
+        levels.filter { it.isExpert == isExpertMode }
+    }
+    val tierFilters = if (isExpertMode) EXPERT_TIER_FILTERS else STANDARD_TIER_FILTERS
+    val safeTierIdx = selectedTierIdx.coerceIn(0, tierFilters.lastIndex)
+
     val totalStarsEarned = records.values.sumOf { it.bestStars }
     val maxPossibleStars = levels.size * 3
-    val clampedContinueId = continueLevelId.coerceIn(1, highestUnlockedLevelId)
-    val continueLevel = levels.firstOrNull { it.id == clampedContinueId } ?: levels.first()
-    val filteredLevels = levels.filter { it.id in TIER_FILTERS[selectedTierIdx].range }
+    val modeUnlockedId = if (isExpertMode) highestUnlockedExpertLevelId else highestUnlockedLevelId
+    val minModeId = modeLevels.firstOrNull()?.id ?: 1
+    val clampedContinueId = if (isExpertMode) {
+        (if (continueLevelId >= 81) continueLevelId else minModeId).coerceIn(minModeId, modeUnlockedId)
+    } else {
+        (if (continueLevelId < 81) continueLevelId else minModeId).coerceIn(minModeId, modeUnlockedId)
+    }
+    val continueLevel = modeLevels.firstOrNull { it.id == clampedContinueId } ?: modeLevels.first()
+    val filteredLevels = modeLevels.filter { it.id in tierFilters[safeTierIdx].range }
 
     Column(
         modifier = Modifier
@@ -209,7 +232,11 @@ fun MainMenuScreen(
                     )
                 ) {
                     Text(
-                        text = "PLAY LVL ${continueLevel.id}: ${continueLevel.name.uppercase()}",
+                        text = if (isExpertMode) {
+                            "EXPERT LVL ${continueLevel.id}: ${continueLevel.name.uppercase()}"
+                        } else {
+                            "PLAY LVL ${continueLevel.id}: ${continueLevel.name.uppercase()}"
+                        },
                         fontSize = 13.sp,
                         fontWeight = FontWeight.ExtraBold,
                         maxLines = 1,
@@ -302,7 +329,63 @@ fun MainMenuScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Standard / Expert Mode Switcher
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(FactoryColors.SurfaceElevated)
+                .border(1.dp, FactoryColors.GridCellBorder, RoundedCornerShape(10.dp))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            val stdSelected = !isExpertMode
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (stdSelected) FactoryColors.BeltChevron else FactoryColors.GridCell)
+                    .clickable {
+                        isExpertMode = false
+                        selectedTierIdx = 0
+                    }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "STANDARD (80)",
+                    color = if (stdSelected) FactoryColors.Background else FactoryColors.TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 0.8.sp
+                )
+            }
+            val expSelected = isExpertMode
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (expSelected) FactoryColors.BeltChevron else FactoryColors.GridCell)
+                    .clickable {
+                        isExpertMode = true
+                        selectedTierIdx = 0
+                    }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "EXPERT · NO HELP (60)",
+                    color = if (expSelected) FactoryColors.Background else FactoryColors.BeltChevron,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 0.8.sp
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
 
         Row(
             modifier = Modifier
@@ -312,7 +395,11 @@ fun MainMenuScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "FACTORY CONTRACTS (${levels.size})",
+                text = if (isExpertMode) {
+                    "EXPERT CONTRACTS (${modeLevels.size})"
+                } else {
+                    "FACTORY CONTRACTS (${modeLevels.size})"
+                },
                 color = FactoryColors.TextSecondary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
@@ -336,8 +423,8 @@ fun MainMenuScreen(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            TIER_FILTERS.forEachIndexed { idx, tier ->
-                val selected = idx == selectedTierIdx
+            tierFilters.forEachIndexed { idx, tier ->
+                val selected = idx == safeTierIdx
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
@@ -371,7 +458,11 @@ fun MainMenuScreen(
         ) {
             items(filteredLevels, key = { it.id }) { level ->
                 val record = records[level.id] ?: LevelRecord()
-                val isUnlocked = level.id <= highestUnlockedLevelId
+                val isUnlocked = if (level.isExpert) {
+                    level.id <= highestUnlockedExpertLevelId
+                } else {
+                    level.id <= highestUnlockedLevelId
+                }
                 LevelCard(
                     level = level,
                     record = record,

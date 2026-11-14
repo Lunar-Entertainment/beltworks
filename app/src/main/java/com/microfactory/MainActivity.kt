@@ -59,7 +59,8 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val completedIds = records.filterValues { it.bestStars > 0 }.keys
-                val highestUnlockedLevelId = LevelRepository.highestUnlockedLevelId(completedIds)
+                val highestUnlockedStandardId = LevelRepository.highestUnlockedLevelId(completedIds)
+                val highestUnlockedExpertId = LevelRepository.highestUnlockedExpertLevelId(completedIds)
 
                 // Initialize AdMob SDK on launch when Help Ads are enabled.
                 DisposableEffect(isHelpAdsEnabled) {
@@ -142,11 +143,12 @@ class MainActivity : ComponentActivity() {
                             levels = LevelRepository.levels,
                             records = records,
                             continueLevelId = lastPlayedLevelId,
-                            highestUnlockedLevelId = highestUnlockedLevelId,
+                            highestUnlockedLevelId = highestUnlockedStandardId,
+                            highestUnlockedExpertLevelId = highestUnlockedExpertId,
                             isMusicEnabled = isMusicEnabled,
                             currentTrackTitle = currentTrackTitle,
                             onPlayLevel = { levelId ->
-                                if (levelId <= highestUnlockedLevelId) {
+                                if (LevelRepository.isLevelUnlocked(levelId, completedIds)) {
                                     lastPlayedLevelId = levelId
                                     progressStore.setLastPlayedLevelId(levelId)
                                     activeLevelId = levelId
@@ -159,9 +161,14 @@ class MainActivity : ComponentActivity() {
                     }
 
                     else -> {
+                        val activeLevel = LevelRepository.getLevel(currentLevelId)
                         FactoryGameScreen(
                             initialLevelId = currentLevelId,
-                            highestUnlockedLevelId = highestUnlockedLevelId,
+                            highestUnlockedLevelId = if (activeLevel.isExpert) {
+                                highestUnlockedExpertId
+                            } else {
+                                highestUnlockedStandardId
+                            },
                             isMusicEnabled = isMusicEnabled,
                             isHelpAdsEnabled = isHelpAdsEnabled,
                             onToggleMusic = { toggleMusic(!isMusicEnabled) },

@@ -165,88 +165,123 @@ fun FactoryGameScreen(
                 if (levelIndex > 0) levelIndex--
             },
             onNextLevel = {
-                if (levelIndex < levels.lastIndex && levels[levelIndex + 1].id <= highestUnlockedLevelId) {
-                    levelIndex++
+                val nextId = LevelRepository.nextLevelIdInMode(currentLevel)
+                if (nextId != null && nextId <= highestUnlockedLevelId) {
+                    val idx = levels.indexOfFirst { it.id == nextId }
+                    if (idx >= 0) levelIndex = idx
                 }
             },
             onSelectSpeed = { speed = it },
             onResetBoard = { resetNonce++ }
         )
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(FactoryColors.Background)
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            val badge = currentLevel.newMechanicBadge
-            if (badge != null) {
+        if (currentLevel.isExpert) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(FactoryColors.Background)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
-                        .background(FactoryColors.BeltChevron.copy(alpha = 0.18f))
+                        .background(FactoryColors.BeltChevron.copy(alpha = 0.16f))
                         .border(1.dp, FactoryColors.BeltChevron.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
                     Text(
-                        text = "NEW: $badge",
+                        text = "EXPERT",
                         color = FactoryColors.BeltChevron,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.ExtraBold
                     )
                 }
-            }
-            Text(
-                text = helpStatusNote?.takeIf { !showHelpDialog && !isHelpUnlocked } ?: currentLevel.hint,
-                color = if (helpStatusNote != null && !isHelpUnlocked) FactoryColors.BeltChevron else FactoryColors.TextMuted,
-                fontSize = 11.sp,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(
-                        if (isHelpUnlocked) FactoryColors.BeltChevron.copy(alpha = 0.2f)
-                        else FactoryColors.SurfaceElevated
-                    )
-                    .border(
-                        1.dp,
-                        if (isHelpUnlocked) FactoryColors.BeltChevron else FactoryColors.GridCellBorder,
-                        RoundedCornerShape(7.dp)
-                    )
-                    .clickable(enabled = !isLoadingHelpAd) {
-                        if (isHelpUnlocked || !isHelpAdsEnabled) {
-                            unlockedHelpLevels = unlockedHelpLevels + currentLevel.id
-                            helpStatusNote = null
-                            showHelpDialog = true
-                        } else {
-                            onRequestHelpAd(
-                                { note ->
-                                    unlockedHelpLevels = unlockedHelpLevels + currentLevel.id
-                                    helpStatusNote = note
-                                    showHelpDialog = true
-                                },
-                                { loading -> isLoadingHelpAd = loading },
-                                { deniedMsg -> helpStatusNote = deniedMsg }
-                            )
-                        }
-                    }
-                    .padding(horizontal = 9.dp, vertical = 4.dp)
-            ) {
                 Text(
-                    text = when {
-                        isLoadingHelpAd -> "Loading…"
-                        isHelpUnlocked -> "Blueprint"
-                        else -> "? Help"
-                    },
-                    color = if (isHelpUnlocked) FactoryColors.BeltChevron else FactoryColors.TextPrimary,
+                    text = "NO HINTS · NO HELP",
+                    color = FactoryColors.TextMuted,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.6.sp
                 )
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(FactoryColors.Background)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val badge = currentLevel.newMechanicBadge
+                if (badge != null) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(FactoryColors.BeltChevron.copy(alpha = 0.18f))
+                            .border(1.dp, FactoryColors.BeltChevron.copy(alpha = 0.7f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "NEW: $badge",
+                            color = FactoryColors.BeltChevron,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+                Text(
+                    text = helpStatusNote?.takeIf { !showHelpDialog && !isHelpUnlocked } ?: currentLevel.hint,
+                    color = if (helpStatusNote != null && !isHelpUnlocked) FactoryColors.BeltChevron else FactoryColors.TextMuted,
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(
+                            if (isHelpUnlocked) FactoryColors.BeltChevron.copy(alpha = 0.2f)
+                            else FactoryColors.SurfaceElevated
+                        )
+                        .border(
+                            1.dp,
+                            if (isHelpUnlocked) FactoryColors.BeltChevron else FactoryColors.GridCellBorder,
+                            RoundedCornerShape(7.dp)
+                        )
+                        .clickable(enabled = !isLoadingHelpAd) {
+                            if (isHelpUnlocked || !isHelpAdsEnabled) {
+                                unlockedHelpLevels = unlockedHelpLevels + currentLevel.id
+                                helpStatusNote = null
+                                showHelpDialog = true
+                            } else {
+                                onRequestHelpAd(
+                                    { note ->
+                                        unlockedHelpLevels = unlockedHelpLevels + currentLevel.id
+                                        helpStatusNote = note
+                                        showHelpDialog = true
+                                    },
+                                    { loading -> isLoadingHelpAd = loading },
+                                    { deniedMsg -> helpStatusNote = deniedMsg }
+                                )
+                            }
+                        }
+                        .padding(horizontal = 9.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = when {
+                            isLoadingHelpAd -> "Loading…"
+                            isHelpUnlocked -> "Blueprint"
+                            else -> "? Help"
+                        },
+                        color = if (isHelpUnlocked) FactoryColors.BeltChevron else FactoryColors.TextPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
@@ -302,22 +337,22 @@ fun FactoryGameScreen(
     }
 
     if (showVictory) {
+        val nextLevelId = LevelRepository.nextLevelIdInMode(currentLevel)
         VictoryDialog(
             level = currentLevel,
             beltsUsed = simulation.beltCount,
             elapsedSeconds = simulation.elapsedSeconds,
             ipm = simulation.rollingIpm,
-            hasNextLevel = levelIndex < levels.lastIndex,
+            hasNextLevel = nextLevelId != null,
             onReplay = {
                 showVictory = false
                 resetNonce++
             },
             onNextLevel = {
                 showVictory = false
-                if (levelIndex < levels.lastIndex) {
-                    levelIndex++
-                } else {
-                    levelIndex = 0
+                if (nextLevelId != null) {
+                    val idx = levels.indexOfFirst { it.id == nextLevelId }
+                    if (idx >= 0) levelIndex = idx
                 }
             },
             onDismiss = {
@@ -326,7 +361,7 @@ fun FactoryGameScreen(
         )
     }
 
-    if (showHelpDialog) {
+    if (showHelpDialog && !currentLevel.isExpert) {
         HelpBlueprintDialog(
             level = currentLevel,
             blueprint = helpBlueprint,
