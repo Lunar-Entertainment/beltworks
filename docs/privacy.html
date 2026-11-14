@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Privacy Policy — Beltworks</title>
+  <style>
+    :root {
+      --bg: #12161F;
+      --surface: #1A2130;
+      --cell: #1E2433;
+      --border: #2C364D;
+      --amber: #F59E0B;
+      --cyan: #22D3EE;
+      --text: #F1F5F9;
+      --muted: #94A3B8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    .wrap {
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 32px 20px 64px;
+    }
+    .back {
+      display: inline-block;
+      color: var(--amber);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.9rem;
+      margin-bottom: 18px;
+    }
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 28px;
+    }
+    h1 {
+      font-size: 1.75rem;
+      margin-bottom: 8px;
+    }
+    .meta {
+      color: var(--muted);
+      font-size: 0.88rem;
+      margin-bottom: 22px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    h2 {
+      font-size: 1.08rem;
+      color: var(--cyan);
+      margin: 22px 0 8px;
+    }
+    p, li {
+      color: #CBD5E1;
+      font-size: 0.95rem;
+      margin-bottom: 8px;
+    }
+    ul {
+      padding-left: 20px;
+      margin-bottom: 10px;
+    }
+    a { color: var(--amber); }
+    code {
+      background: var(--cell);
+      padding: 2px 6px;
+      border-radius: 5px;
+      font-size: 0.86rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="index.html">← Back to Beltworks</a>
+    <article class="panel">
+      <h1>Privacy Policy for Beltworks</h1>
+      <div class="meta">
+        <strong>Effective Date:</strong> November 14, 2026 &middot;
+        <strong>Package:</strong> <code>com.lunarentertainment.beltworks</code> &middot;
+        <strong>Developer:</strong> Lunar Entertainment
+      </div>
+
+      <p>Lunar Entertainment respects your privacy. This Privacy Policy explains how <strong>Beltworks</strong> handles information when you use the Android mobile application.</p>
+
+      <h2>1. Summary</h2>
+      <ul>
+        <li><strong>No Developer Account or Cloud Tracking:</strong> Lunar Entertainment does not operate user accounts, analytics servers, or custom tracking in Beltworks.</li>
+        <li><strong>Optional Help Ads (Google AdMob):</strong> Beltworks includes one optional skippable ad integration powered by <strong>Google AdMob</strong> used exclusively when you tap <em>? Help</em> inside a puzzle level (and only when <em>Help Ad Before Hint</em> is enabled in Settings).</li>
+        <li><strong>In-Game Ad Toggle:</strong> Help Ads are enabled by default to support development and can be toggled <strong>OFF</strong> at any time in the in-game Settings menu.</li>
+      </ul>
+
+      <h2>2. Information Handled by Third-Party Advertising (Google AdMob)</h2>
+      <p>When <strong>Help Ad Before Hint</strong> is enabled in Settings, Beltworks uses the Google Mobile Ads SDK (AdMob) to load and display an optional skippable Help ad (<code>INTERNET</code> and <code>ACCESS_NETWORK_STATE</code> permissions).</p>
+      <p>When AdMob loads an ad, Google may automatically process technical information such as:</p>
+      <ul>
+        <li>Device Advertising ID (<code>AD_ID</code>), subject to your Android OS ad privacy settings</li>
+        <li>IP address (used for approximate region and fraud prevention)</li>
+        <li>Basic device and app interaction diagnostics needed to serve and measure the ad</li>
+      </ul>
+      <p>Review Google's Privacy Policy: <a href="https://policies.google.com/privacy" rel="noopener">https://policies.google.com/privacy</a>. If you toggle <strong>Help Ad Before Hint</strong> OFF in Settings, Beltworks does not trigger Help ad requests when opening Help.</p>
+
+      <h2>3. Information Beltworks Does Not Collect</h2>
+      <ul>
+        <li>Names, email addresses, passwords, or account profiles</li>
+        <li>Precise GPS location</li>
+        <li>Contacts, photos, media, microphone, or camera data</li>
+        <li>Payment or financial information</li>
+      </ul>
+
+      <h2>4. Local On-Device Storage</h2>
+      <p>Beltworks stores minimal progress and settings locally on your device using private <code>SharedPreferences</code> (<code>MODE_PRIVATE</code>): best stars, best belt counts, unlocked level progression, last played level ID, audio mute state, Help Ad toggle preference, and update notice acknowledgment.</p>
+      <p>This data remains on your device unless Android system device backup is enabled in your OS settings, and can be cleared anytime via Android Settings or by uninstalling the app.</p>
+
+      <h2>5. Audio</h2>
+      <p>All music and sound effects in Beltworks are synthesized locally on your device using Android's <code>AudioTrack</code> API without downloading external audio streams.</p>
+
+      <h2>6. Children's Privacy</h2>
+      <p>Beltworks does not knowingly collect personal information from children under 13 (or the applicable age in your jurisdiction). Parents or guardians can turn off Help Ads at any time in Settings or restrict Advertising ID access in Android system settings.</p>
+
+      <h2>7. Contact</h2>
+      <p>For questions about this Privacy Policy or Beltworks, please contact <strong>Lunar Entertainment</strong> via:</p>
+      <ul>
+        <li>GitHub Repository: <a href="https://github.com/Lunar-Entertainment/beltworks">https://github.com/Lunar-Entertainment/beltworks</a></li>
+        <li>Support / Issues: <a href="https://github.com/Lunar-Entertainment/beltworks/issues">https://github.com/Lunar-Entertainment/beltworks/issues</a></li>
+      </ul>
+    </article>
+  </div>
+</body>
+</html>

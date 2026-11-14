@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Beltworks — Portrait Grid Automation Puzzler</title>
+  <meta name="description" content="Beltworks is a minimalist, one-handed, portrait-mode conveyor belt factory puzzle game with 80 progressive levels and a procedural flow soundtrack." />
+  <style>
+    :root {
+      --bg: #12161F;
+      --surface: #1A2130;
+      --cell: #1E2433;
+      --border: #2C364D;
+      --amber: #F59E0B;
+      --cyan: #22D3EE;
+      --emerald: #10B981;
+      --copper: #E07A48;
+      --text: #F1F5F9;
+      --muted: #94A3B8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: radial-gradient(circle at top center, #1B2436 0%, var(--bg) 55%);
+      color: var(--text);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+    .wrap {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 28px 20px 64px;
+    }
+    nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 36px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .brand {
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      font-size: 0.95rem;
+      color: var(--amber);
+      text-transform: uppercase;
+    }
+    .nav-links {
+      display: flex;
+      gap: 16px;
+      font-size: 0.9rem;
+    }
+    .nav-links a {
+      color: var(--muted);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .nav-links a:hover { color: var(--text); }
+
+    .hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 36px 28px;
+      text-align: center;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    }
+    .kicker {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--amber);
+      background: rgba(245, 158, 11, 0.14);
+      border: 1px solid rgba(245, 158, 11, 0.45);
+      padding: 4px 12px;
+      border-radius: 999px;
+      margin-bottom: 14px;
+    }
+    h1 {
+      font-size: clamp(2.1rem, 5vw, 3.2rem);
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+    }
+    .lead {
+      max-width: 620px;
+      margin: 0 auto 24px;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+
+    /* Animated conveyor belt bar */
+    .belt-stage {
+      position: relative;
+      height: 58px;
+      max-width: 680px;
+      margin: 26px auto;
+      background: #232C3F;
+      border: 3px solid #4A5568;
+      border-radius: 14px;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+    }
+    .belt-chevrons {
+      position: absolute;
+      inset: 0;
+      background-image: repeating-linear-gradient(
+        90deg,
+        transparent 0px,
+        transparent 38px,
+        rgba(245, 158, 11, 0.25) 38px,
+        rgba(245, 158, 11, 0.25) 44px
+      );
+      animation: beltScroll 1.2s linear infinite;
+    }
+    @keyframes beltScroll {
+      from { transform: translateX(0); }
+      to { transform: translateX(44px); }
+    }
+    .belt-items {
+      position: relative;
+      width: 100%;
+      display: flex;
+      justify-content: space-around;
+      align-items: center;
+      z-index: 2;
+      padding: 0 18px;
+    }
+    .chip {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 5px 10px;
+      border-radius: 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .chip.ore { color: #9CA3AF; border-color: #6B7280; }
+    .chip.plate { color: #E2E8F0; border-color: #94A3B8; }
+    .chip.wire { color: var(--copper); border-color: var(--copper); }
+    .chip.circuit { color: var(--emerald); border-color: var(--emerald); }
+    .chip.motor { color: var(--cyan); border-color: var(--cyan); }
+
+    .cta-row {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 12px 22px;
+      border-radius: 12px;
+      font-weight: 800;
+      font-size: 0.92rem;
+      text-decoration: none;
+      transition: transform 0.15s ease, opacity 0.15s ease;
+    }
+    .btn:hover { transform: translateY(-1px); opacity: 0.95; }
+    .btn-primary {
+      background: var(--amber);
+      color: var(--bg);
+    }
+    .btn-secondary {
+      background: var(--cell);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-top: 28px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+    }
+    .card h2 {
+      font-size: 1rem;
+      margin-bottom: 8px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .card p {
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+
+    .section {
+      margin-top: 28px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 24px;
+    }
+    .section h2 {
+      font-size: 1.15rem;
+      margin-bottom: 14px;
+      letter-spacing: 0.04em;
+    }
+    .tiers {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+    }
+    .tier {
+      background: var(--cell);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .tier strong {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--cyan);
+      margin-bottom: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .tier span {
+      font-size: 0.86rem;
+      color: var(--muted);
+    }
+
+    footer {
+      margin-top: 40px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+      display: flex;
+      justify-content: center;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+    footer a {
+      color: var(--amber);
+      text-decoration: none;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <div class="brand">Lunar Entertainment</div>
+      <div class="nav-links">
+        <a href="privacy.html">Privacy Policy</a>
+        <a href="https://github.com/Lunar-Entertainment/beltworks">GitHub</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div class="kicker">Portrait Grid Automation Puzzler</div>
+      <h1>BELTWORKS</h1>
+      <p class="lead">
+        Build curved conveyor lines, smelters, presses, bridges, filters, and dual-input assemblers
+        across <strong>80 handcrafted factory puzzles</strong> — built natively in Kotlin &amp; Jetpack Compose.
+      </p>
+
+      <div class="belt-stage" aria-hidden="true">
+        <div class="belt-chevrons"></div>
+        <div class="belt-items">
+          <span class="chip ore">IRON ORE</span>
+          <span class="chip plate">PLATE</span>
+          <span class="chip wire">WIRE</span>
+          <span class="chip circuit">CIRCUIT</span>
+          <span class="chip motor">MOTOR</span>
+        </div>
+      </div>
+
+      <div class="cta-row">
+        <a class="btn btn-primary" href="https://github.com/Lunar-Entertainment/beltworks">View on GitHub</a>
+        <a class="btn btn-secondary" href="privacy.html">Privacy Policy</a>
+      </div>
+    </section>
+
+    <div class="grid">
+      <article class="card">
+        <h2><span class="dot" style="background:#F59E0B"></span> One-Handed Flow Routing</h2>
+        <p>Drag across grid tiles to lay straight and 90° curved belts automatically. Tap placed belts to sweep smoothly into neighboring machines, or tap machines to rotate.</p>
+      </article>
+      <article class="card">
+        <h2><span class="dot" style="background:#22D3EE"></span> Pure Kotlin 60/120 FPS Engine</h2>
+        <p>Two-pass lockstep grid tick simulation decoupled cleanly from Android framework code, interpolated smoothly at frame rate with live IPM throughput readouts.</p>
+      </article>
+      <article class="card">
+        <h2><span class="dot" style="background:#10B981"></span> 5-Track Procedural Flow Audio</h2>
+        <p>Zero-asset synthesized soundtrack featuring 5 calming ambient tracks (Conveyor Drift, Copper Rain, Midnight Smelter, Clockwork Tide, Solar Circuit) with damped echo delay.</p>
+      </article>
+    </div>
+
+    <section class="section">
+      <h2>Progression &amp; Mechanics (Levels 1–80)</h2>
+      <div class="tiers">
+        <div class="tier">
+          <strong>LVL 1–8 · CORE</strong>
+          <span>Belts, Splitters, Smelters, Presses, and Gear Assemblers.</span>
+        </div>
+        <div class="tier">
+          <strong>LVL 9–18 · BRIDGE</strong>
+          <span>Copper Wire pressing and dual-lane 1-tile Bridge overpasses.</span>
+        </div>
+        <div class="tier">
+          <strong>LVL 19–30 · CIRCUIT</strong>
+          <span>Multi-branch Iron Plate + Copper Wire Circuit synthesis.</span>
+        </div>
+        <div class="tier">
+          <strong>LVL 31–44 · FILTER</strong>
+          <span>Mixed dual-resource Spawners, item Filters, and Trash sinks.</span>
+        </div>
+        <div class="tier">
+          <strong>LVL 45–62 · MOTOR</strong>
+          <span>Overflow priority valves and full Gear + Circuit Motor assembly.</span>
+        </div>
+        <div class="tier">
+          <strong>LVL 63–80 · APEX</strong>
+          <span>Compact 10×13 multi-quota industrial logic challenges.</span>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <span>&copy; 2026 Lunar Entertainment · Beltworks</span>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="https://github.com/Lunar-Entertainment/beltworks">Source Repository</a>
+    </footer>
+  </div>
+</body>
+</html>
