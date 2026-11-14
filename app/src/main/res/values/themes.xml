@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.MicroFactoryBelt" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#FF12161F</item>
+        <item name="android:navigationBarColor">#FF12161F</item>
+        <item name="android:windowBackground">#FF12161F</item>
+    </style>
+</resources>
