@@ -604,4 +604,39 @@ class FactorySimulationTest {
         repeat(400) { if (!sim80.isComplete) sim80.tick() }
         assertTrue("Level 80 should complete", sim80.isComplete)
     }
+
+    @Test
+    fun levelProgressionUnlocksSequentiallyAndBlocksLockedLevels() {
+        assertEquals(1, LevelRepository.highestUnlockedLevelId(emptySet()))
+        assertTrue(LevelRepository.isLevelUnlocked(1, emptySet()))
+        assertFalse(LevelRepository.isLevelUnlocked(2, emptySet()))
+
+        val completed1And2 = setOf(1, 2)
+        assertEquals(3, LevelRepository.highestUnlockedLevelId(completed1And2))
+        assertTrue(LevelRepository.isLevelUnlocked(3, completed1And2))
+        assertFalse(LevelRepository.isLevelUnlocked(4, completed1And2))
+
+        // Skipping ahead does not unlock levels past an incomplete predecessor
+        val skipped = setOf(1, 5)
+        assertEquals(2, LevelRepository.highestUnlockedLevelId(skipped))
+        assertFalse(LevelRepository.isLevelUnlocked(5, skipped))
+
+        val allCompleted = (1..80).toSet()
+        assertEquals(80, LevelRepository.highestUnlockedLevelId(allCompleted))
+        assertTrue(LevelRepository.isLevelUnlocked(80, allCompleted))
+    }
+
+    @Test
+    fun helpAdvisorProducesValidStepsAndOpenPathBlueprints() {
+        for (levelId in listOf(1, 10, 31, 48, 80)) {
+            val level = LevelRepository.getLevel(levelId)
+            val blueprint = LevelHelpAdvisor.buildBlueprint(level)
+            assertTrue("Level $levelId should produce crafting steps", blueprint.craftingSteps.isNotEmpty())
+            assertTrue("Level $levelId should produce suggested path", blueprint.suggestedPathCoords.isNotEmpty())
+            for (coord in blueprint.suggestedPathCoords) {
+                assertTrue(coord.x in 0 until level.width && coord.y in 0 until level.height)
+                assertFalse(coord in level.rocks)
+            }
+        }
+    }
 }

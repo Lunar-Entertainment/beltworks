@@ -75,11 +75,13 @@ fun MainMenuScreen(
     levels: List<LevelConfig>,
     records: Map<Int, LevelRecord>,
     continueLevelId: Int,
+    highestUnlockedLevelId: Int,
     isMusicEnabled: Boolean,
     currentTrackTitle: String,
     onPlayLevel: (Int) -> Unit,
     onToggleMusic: () -> Unit,
-    onNextTrack: () -> Unit
+    onNextTrack: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     var animPhase by remember { mutableFloatStateOf(0f) }
     var selectedTierIdx by remember { mutableIntStateOf(0) }
@@ -96,7 +98,8 @@ fun MainMenuScreen(
 
     val totalStarsEarned = records.values.sumOf { it.bestStars }
     val maxPossibleStars = levels.size * 3
-    val continueLevel = levels.firstOrNull { it.id == continueLevelId } ?: levels.first()
+    val clampedContinueId = continueLevelId.coerceIn(1, highestUnlockedLevelId)
+    val continueLevel = levels.firstOrNull { it.id == clampedContinueId } ?: levels.first()
     val filteredLevels = levels.filter { it.id in TIER_FILTERS[selectedTierIdx].range }
 
     Column(
@@ -225,15 +228,33 @@ fun MainMenuScreen(
                             RoundedCornerShape(12.dp)
                         )
                         .clickable(onClick = onToggleMusic)
-                        .padding(horizontal = 14.dp),
+                        .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = if (isMusicEnabled) "♪ ON" else "♪ OFF",
                         color = if (isMusicEnabled) FactoryColors.SpawnerAccent else FactoryColors.TextMuted,
-                        fontSize = 13.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(FactoryColors.GridCell)
+                        .border(1.2.dp, FactoryColors.GridCellBorder, RoundedCornerShape(12.dp))
+                        .clickable(onClick = onOpenSettings)
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "⚙",
+                        color = FactoryColors.TextPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             }
@@ -350,10 +371,12 @@ fun MainMenuScreen(
         ) {
             items(filteredLevels, key = { it.id }) { level ->
                 val record = records[level.id] ?: LevelRecord()
+                val isUnlocked = level.id <= highestUnlockedLevelId
                 LevelCard(
                     level = level,
                     record = record,
-                    onClick = { onPlayLevel(level.id) }
+                    isUnlocked = isUnlocked,
+                    onClick = { if (isUnlocked) onPlayLevel(level.id) }
                 )
             }
         }
@@ -364,6 +387,7 @@ fun MainMenuScreen(
 private fun LevelCard(
     level: LevelConfig,
     record: LevelRecord,
+    isUnlocked: Boolean,
     onClick: () -> Unit
 ) {
     val hatches = level.hatches.mapNotNull { it.tile as? TileEntity.Hatch }
@@ -373,13 +397,17 @@ private fun LevelCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .background(FactoryColors.SurfaceElevated)
+            .background(if (isUnlocked) FactoryColors.SurfaceElevated else FactoryColors.Background)
             .border(
                 width = 1.dp,
-                color = if (completed) FactoryColors.HatchDoneAccent.copy(alpha = 0.55f) else FactoryColors.GridCellBorder,
+                color = when {
+                    !isUnlocked -> FactoryColors.GridCell
+                    completed -> FactoryColors.HatchDoneAccent.copy(alpha = 0.55f)
+                    else -> FactoryColors.GridCellBorder
+                },
                 shape = RoundedCornerShape(14.dp)
             )
-            .clickable(onClick = onClick)
+            .clickable(enabled = isUnlocked, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
@@ -397,7 +425,7 @@ private fun LevelCard(
                 ) {
                     Text(
                         text = "${level.id}",
-                        color = FactoryColors.BeltChevron,
+                        color = if (isUnlocked) FactoryColors.BeltChevron else FactoryColors.TextMuted,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.ExtraBold,
                         fontFamily = FontFamily.Monospace
@@ -405,7 +433,7 @@ private fun LevelCard(
                 }
                 Text(
                     text = level.name,
-                    color = FactoryColors.TextPrimary,
+                    color = if (isUnlocked) FactoryColors.TextPrimary else FactoryColors.TextMuted,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -487,32 +515,50 @@ private fun LevelCard(
 
         Spacer(modifier = Modifier.width(8.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-            for (s in 1..3) {
-                val earned = s <= record.bestStars
-                Canvas(modifier = Modifier.size(17.dp)) {
-                    val cx = size.width / 2f
-                    val cy = size.height / 2f
-                    val outerR = size.minDimension * 0.46f
-                    val innerR = outerR * 0.44f
-                    val path = Path()
-                    for (p in 0 until 10) {
-                        val angle = -PI.toFloat() / 2f + p * (PI.toFloat() / 5f)
-                        val r = if (p % 2 == 0) outerR else innerR
-                        val px = cx + cos(angle) * r
-                        val py = cy + sin(angle) * r
-                        if (p == 0) path.moveTo(px, py) else path.lineTo(px, py)
+        if (!isUnlocked) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(FactoryColors.GridCell)
+                    .border(1.dp, FactoryColors.GridCellBorder, RoundedCornerShape(6.dp))
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = "LOCKED",
+                    color = FactoryColors.TextMuted,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                for (s in 1..3) {
+                    val earned = s <= record.bestStars
+                    Canvas(modifier = Modifier.size(17.dp)) {
+                        val cx = size.width / 2f
+                        val cy = size.height / 2f
+                        val outerR = size.minDimension * 0.46f
+                        val innerR = outerR * 0.44f
+                        val path = Path()
+                        for (p in 0 until 10) {
+                            val angle = -PI.toFloat() / 2f + p * (PI.toFloat() / 5f)
+                            val r = if (p % 2 == 0) outerR else innerR
+                            val px = cx + cos(angle) * r
+                            val py = cy + sin(angle) * r
+                            if (p == 0) path.moveTo(px, py) else path.lineTo(px, py)
+                        }
+                        path.close()
+                        drawPath(
+                            path = path,
+                            color = if (earned) FactoryColors.GearGold else FactoryColors.GridCell
+                        )
+                        drawPath(
+                            path = path,
+                            color = if (earned) FactoryColors.GearDark else FactoryColors.GridCellBorder,
+                            style = Stroke(width = 1.4f)
+                        )
                     }
-                    path.close()
-                    drawPath(
-                        path = path,
-                        color = if (earned) FactoryColors.GearGold else FactoryColors.GridCell
-                    )
-                    drawPath(
-                        path = path,
-                        color = if (earned) FactoryColors.GearDark else FactoryColors.GridCellBorder,
-                        style = Stroke(width = 1.4f)
-                    )
                 }
             }
         }

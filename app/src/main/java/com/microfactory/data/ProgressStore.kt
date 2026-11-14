@@ -41,4 +41,16 @@ class ProgressStore(context: Context) {
     fun setMusicEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("music_enabled", enabled).apply()
     }
+
+    fun isHelpAdsEnabled(): Boolean = prefs.getBoolean("help_ads_enabled", true)
+
+    fun setHelpAdsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("help_ads_enabled", enabled).apply()
+    }
+
+    fun getLastSeenNoticeVersion(): Long = prefs.getLong("last_seen_notice_version", -1L)
+
+    fun setLastSeenNoticeVersion(versionCode: Long) {
+        prefs.edit().putLong("last_seen_notice_version", versionCode).apply()
+    }
 }

@@ -3,14 +3,17 @@ package com.microfactory.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +38,7 @@ import com.microfactory.render.FactoryColors
 import com.microfactory.sim.FactorySimulation
 import com.microfactory.sim.GridCoord
 import com.microfactory.sim.ItemType
+import com.microfactory.sim.LevelHelpAdvisor
 import com.microfactory.sim.LevelRepository
 import com.microfactory.sim.SimulationSpeed
 import com.microfactory.sim.TileEntity
@@ -42,11 +46,14 @@ import com.microfactory.sim.TileEntity
 @Composable
 fun FactoryGameScreen(
     initialLevelId: Int,
+    highestUnlockedLevelId: Int,
     isMusicEnabled: Boolean,
+    isHelpAdsEnabled: Boolean,
     onToggleMusic: () -> Unit,
     onNextTrack: () -> Unit,
     onBackToMenu: () -> Unit,
     onTileEdited: () -> Unit,
+    onRequestHelpAd: (onUnlocked: (String?) -> Unit, onLoadingChanged: (Boolean) -> Unit, onDenied: (String) -> Unit) -> Unit,
     onLevelCompleted: (levelId: Int, stars: Int, beltsUsed: Int) -> Unit
 ) {
     BackHandler(onBack = onBackToMenu)
@@ -73,6 +80,13 @@ fun FactoryGameScreen(
     var showVictory by remember { mutableStateOf(false) }
     var victoryRecordedForRun by remember { mutableStateOf(false) }
 
+    var unlockedHelpLevels by remember { mutableStateOf(emptySet<Int>()) }
+    var showHelpDialog by remember { mutableStateOf(false) }
+    var helpStatusNote by remember { mutableStateOf<String?>(null) }
+    var isLoadingHelpAd by remember { mutableStateOf(false) }
+    val helpBlueprint = remember(currentLevel.id) { LevelHelpAdvisor.buildBlueprint(currentLevel) }
+    val isHelpUnlocked = currentLevel.id in unlockedHelpLevels
+
     LaunchedEffect(levelIndex, resetNonce) {
         simulation.loadLevel(currentLevel)
         if (currentLevel.id < selectedTool.unlockedFromLevel) {
@@ -83,6 +97,8 @@ fun FactoryGameScreen(
         beltPhase = 0f
         showVictory = false
         victoryRecordedForRun = false
+        showHelpDialog = false
+        helpStatusNote = null
         if (speed == SimulationSpeed.PAUSED) {
             speed = SimulationSpeed.X1
         }
@@ -137,7 +153,7 @@ fun FactoryGameScreen(
         TopHudBar(
             level = currentLevel,
             hasPrevLevel = levelIndex > 0,
-            hasNextLevel = levelIndex < levels.lastIndex,
+            hasNextLevel = levelIndex < levels.lastIndex && levels[levelIndex + 1].id <= highestUnlockedLevelId,
             hatches = hatches,
             rollingIpm = simulation.rollingIpm,
             speed = speed,
@@ -149,7 +165,9 @@ fun FactoryGameScreen(
                 if (levelIndex > 0) levelIndex--
             },
             onNextLevel = {
-                if (levelIndex < levels.lastIndex) levelIndex++
+                if (levelIndex < levels.lastIndex && levels[levelIndex + 1].id <= highestUnlockedLevelId) {
+                    levelIndex++
+                }
             },
             onSelectSpeed = { speed = it },
             onResetBoard = { resetNonce++ }
@@ -181,12 +199,55 @@ fun FactoryGameScreen(
                 }
             }
             Text(
-                text = currentLevel.hint,
-                color = FactoryColors.TextMuted,
+                text = helpStatusNote?.takeIf { !showHelpDialog && !isHelpUnlocked } ?: currentLevel.hint,
+                color = if (helpStatusNote != null && !isHelpUnlocked) FactoryColors.BeltChevron else FactoryColors.TextMuted,
                 fontSize = 11.sp,
                 maxLines = 2,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(
+                        if (isHelpUnlocked) FactoryColors.BeltChevron.copy(alpha = 0.2f)
+                        else FactoryColors.SurfaceElevated
+                    )
+                    .border(
+                        1.dp,
+                        if (isHelpUnlocked) FactoryColors.BeltChevron else FactoryColors.GridCellBorder,
+                        RoundedCornerShape(7.dp)
+                    )
+                    .clickable(enabled = !isLoadingHelpAd) {
+                        if (isHelpUnlocked || !isHelpAdsEnabled) {
+                            unlockedHelpLevels = unlockedHelpLevels + currentLevel.id
+                            helpStatusNote = null
+                            showHelpDialog = true
+                        } else {
+                            onRequestHelpAd(
+                                { note ->
+                                    unlockedHelpLevels = unlockedHelpLevels + currentLevel.id
+                                    helpStatusNote = note
+                                    showHelpDialog = true
+                                },
+                                { loading -> isLoadingHelpAd = loading },
+                                { deniedMsg -> helpStatusNote = deniedMsg }
+                            )
+                        }
+                    }
+                    .padding(horizontal = 9.dp, vertical = 4.dp)
+            ) {
+                Text(
+                    text = when {
+                        isLoadingHelpAd -> "Loading…"
+                        isHelpUnlocked -> "Blueprint"
+                        else -> "? Help"
+                    },
+                    color = if (isHelpUnlocked) FactoryColors.BeltChevron else FactoryColors.TextPrimary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
         Box(
@@ -201,6 +262,7 @@ fun FactoryGameScreen(
                 selectedTool = selectedTool,
                 selectedFilterItem = selectedFilterItem,
                 activeFilterCoord = activeFilterCoord,
+                helpRouteCoords = if (isHelpUnlocked) helpBlueprint.suggestedPathCoords else emptySet(),
                 tickAlpha = tickAlpha,
                 beltPhase = beltPhase,
                 renderVersion = renderVersion,
@@ -261,6 +323,15 @@ fun FactoryGameScreen(
             onDismiss = {
                 showVictory = false
             }
+        )
+    }
+
+    if (showHelpDialog) {
+        HelpBlueprintDialog(
+            level = currentLevel,
+            blueprint = helpBlueprint,
+            statusNote = helpStatusNote,
+            onDismiss = { showHelpDialog = false }
         )
     }
 }

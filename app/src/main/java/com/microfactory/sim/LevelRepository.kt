@@ -337,4 +337,21 @@ object LevelRepository {
 
     fun getLevel(id: Int): LevelConfig =
         levels.firstOrNull { it.id == id } ?: levels.first()
+
+    /**
+     * Level 1 is always unlocked. Each subsequent level unlocks once all preceding
+     * levels have at least 1 earned star (completed).
+     */
+    fun highestUnlockedLevelId(completedLevelIds: Set<Int>): Int {
+        var highest = 1
+        for (level in levels) {
+            if (level.id <= highest && level.id in completedLevelIds) {
+                highest = (level.id + 1).coerceAtMost(levels.size)
+            }
+        }
+        return highest
+    }
+
+    fun isLevelUnlocked(levelId: Int, completedLevelIds: Set<Int>): Boolean =
+        levelId <= highestUnlockedLevelId(completedLevelIds)
 }

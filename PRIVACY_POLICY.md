@@ -10,59 +10,69 @@ Lunar Entertainment respects your privacy. This Privacy Policy explains how **Be
 
 ## 1. Summary
 
-**Beltworks does not collect, store on external servers, share, or sell any personal data.**
-
-The app runs 100% offline on your device.
-
----
-
-## 2. Information We Do Not Collect
-
-Beltworks does **not** collect or process:
-- Personal identifiers (name, email address, phone number, account IDs, or advertising IDs)
-- Device location data
-- Usage analytics, telemetry, or crash reports sent to external servers
-- Contacts, photos, media, microphone, camera, or sensor data
-- Financial or payment information
-
-The application does **not** include advertisements, third-party analytics SDKs, social media SDKs, or tracking libraries.
+- **No Developer Account or Cloud Tracking:** Lunar Entertainment does not operate user accounts, analytics servers, or custom tracking in Beltworks.
+- **Optional Help Ads (Google AdMob):** Beltworks includes **one optional skippable ad integration** powered by **Google AdMob** used exclusively when you tap **? Help** inside a puzzle level (and only when **Help Ad Before Hint** is turned ON in Settings).
+- **In-Game Ad Toggle:** Help Ads are enabled by default to support development, and can be toggled **OFF** at any time in the in-game **Settings** menu.
 
 ---
 
-## 3. Permissions & Network Access
+## 2. Information Handled by Third-Party Advertising (Google AdMob)
 
-Beltworks requests **no sensitive Android permissions** and does **not** request the `INTERNET` permission in its `AndroidManifest.xml`. The game cannot transmit data over the network.
+When **Help Ad Before Hint** is enabled in Settings, Beltworks uses the **Google Mobile Ads SDK (AdMob)** to load and display an optional skippable Help ad (`INTERNET` and `ACCESS_NETWORK_STATE` permissions).
 
-All audio in the game is synthesized locally on your device using Android's `AudioTrack` API without downloading or streaming external media.
+When AdMob loads an ad, Google may automatically process technical information such as:
+- Device Advertising ID (`com.google.android.gms.permission.AD_ID`), subject to your Android OS ad privacy settings
+- IP address (used for approximate region / fraud prevention)
+- Basic device and app interaction diagnostics needed to serve and measure the ad
+
+You can review Google's Privacy Policy here: https://policies.google.com/privacy  
+If you toggle **Help Ad Before Hint** OFF in Settings, Beltworks does not trigger Help ad requests when opening Help.
+
+---
+
+## 3. Information Beltworks Does Not Collect
+
+Lunar Entertainment does **not** directly collect, store on external servers, or sell:
+- Names, email addresses, passwords, or account profiles
+- Precise GPS location
+- Contacts, photos, media, microphone, or camera data
+- Payment or financial information
 
 ---
 
 ## 4. Local On-Device Storage
 
-To preserve your gameplay progress, Beltworks stores minimal non-personal game state locally on your device using Android's private `SharedPreferences` (`MODE_PRIVATE`):
-- Best star ratings and lowest belt counts per level
+To preserve your gameplay progress and preferences, Beltworks stores minimal settings locally on your device using Android's private `SharedPreferences` (`MODE_PRIVATE`):
+- Best star ratings, lowest belt counts, and unlocked level progression
 - Last played level ID
-- Soundtrack mute/unmute preference (`music_enabled`)
+- Audio preference (`music_enabled`)
+- Help Ad toggle state (`help_ads_enabled`) and update notice acknowledgment (`last_seen_notice_version`)
 
-This data stays strictly on your device unless you have Android system device backup enabled on your phone (via Android's standard `allowBackup` setting, managed through your Google/Android device settings). You can delete all locally stored game data at any time by clearing the app's storage in Android Settings or uninstalling the app.
-
----
-
-## 5. Children's Privacy
-
-Because Beltworks collects no personal information from anyone and operates entirely offline without accounts or ads, no personal data from children under 13 (or the applicable age in your jurisdiction) is collected or transmitted.
+This data stays on your device unless you have Android system backup enabled via your device settings. You can delete all locally stored data at any time by clearing the app's storage in Android Settings or uninstalling the app.
 
 ---
 
-## 6. Changes to This Privacy Policy
+## 5. Audio
 
-If a future version of Beltworks introduces features that affect data handling (such as cloud saves, leaderboards, or optional online services), this Privacy Policy will be updated before those changes take effect, along with a revised effective date.
+All music and sound effects in Beltworks are synthesized locally on your device via Android's `AudioTrack` API without downloading external audio streams.
 
 ---
 
-## 7. Contact
+## 6. Children's Privacy
 
-If you have questions about this Privacy Policy or Beltworks, please contact **Lunar Entertainment** via the project repository:
+Beltworks does not knowingly collect personal information from children under 13 (or the applicable age in your jurisdiction). Parents or guardians can disable optional Help Ads at any time in the app's **Settings** menu or restrict Advertising ID access in Android system settings.
+
+---
+
+## 7. Changes to This Privacy Policy
+
+If future updates change how data or ads are handled, this Privacy Policy will be updated along with a new effective date, and significant updates are highlighted in the app's update notice.
+
+---
+
+## 8. Contact
+
+If you have questions about this Privacy Policy or Beltworks, please contact **Lunar Entertainment**:
 
 - GitHub Repository: https://github.com/Lunar-Entertainment/micro-factory-belt
 - Support / Issues: https://github.com/Lunar-Entertainment/micro-factory-belt/issues

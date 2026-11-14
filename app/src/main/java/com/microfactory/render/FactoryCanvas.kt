@@ -80,6 +80,7 @@ fun FactoryCanvas(
     selectedTool: BuildTool,
     selectedFilterItem: ItemType,
     activeFilterCoord: GridCoord?,
+    helpRouteCoords: Set<GridCoord> = emptySet(),
     tickAlpha: Float,
     beltPhase: Float,
     renderVersion: Int,
@@ -245,7 +246,21 @@ fun FactoryCanvas(
                 )
 
                 when (val tile = simulation.getTile(coord)) {
-                    TileEntity.Empty -> Unit
+                    TileEntity.Empty -> {
+                        if (coord in helpRouteCoords) {
+                            val center = topLeft + Offset(metrics.cellSize * 0.5f, metrics.cellSize * 0.5f)
+                            drawCircle(
+                                color = FactoryColors.BeltChevron.copy(alpha = 0.22f),
+                                radius = metrics.cellSize * 0.14f,
+                                center = center
+                            )
+                            drawCircle(
+                                color = FactoryColors.BeltChevron.copy(alpha = 0.65f),
+                                radius = metrics.cellSize * 0.065f,
+                                center = center
+                            )
+                        }
+                    }
                     TileEntity.Rock -> drawRockTile(topLeft, metrics.cellSize)
                     is TileEntity.Belt -> drawBeltTile(topLeft, metrics.cellSize, tile, beltPhase)
                     is TileEntity.Splitter -> drawSplitterTile(topLeft, metrics.cellSize, tile)
