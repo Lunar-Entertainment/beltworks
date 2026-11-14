@@ -80,13 +80,33 @@ fun DrawScope.drawItemShape(
                 cornerRadius = CornerRadius(radius * 0.14f),
                 style = Stroke(width = (radius * 0.14f).coerceAtLeast(1.2f))
             )
-            // Corner rivets
             val rivetOffset = side * 0.30f
             val rivetRadius = (radius * 0.09f).coerceAtLeast(1f)
             drawCircle(Color.White.copy(alpha = 0.7f), rivetRadius, center + Offset(-rivetOffset, -rivetOffset))
             drawCircle(Color.White.copy(alpha = 0.7f), rivetRadius, center + Offset(rivetOffset, -rivetOffset))
             drawCircle(Color.White.copy(alpha = 0.7f), rivetRadius, center + Offset(-rivetOffset, rivetOffset))
             drawCircle(Color.White.copy(alpha = 0.7f), rivetRadius, center + Offset(rivetOffset, rivetOffset))
+        }
+
+        ItemType.COPPER_WIRE -> {
+            val outer = radius * 0.96f
+            drawCircle(
+                color = FactoryColors.CopperWire,
+                radius = outer,
+                center = center,
+                style = Stroke(width = (radius * 0.34f).coerceAtLeast(2f))
+            )
+            drawCircle(
+                color = FactoryColors.CopperWireCoil,
+                radius = radius * 0.56f,
+                center = center,
+                style = Stroke(width = (radius * 0.20f).coerceAtLeast(1.4f))
+            )
+            drawCircle(
+                color = FactoryColors.GridCell,
+                radius = radius * 0.26f,
+                center = center
+            )
         }
 
         ItemType.GEAR -> {
@@ -98,6 +118,59 @@ fun DrawScope.drawItemShape(
                 teeth = 8,
                 fillColor = FactoryColors.GearGold,
                 rimColor = FactoryColors.GearDark
+            )
+        }
+
+        ItemType.CIRCUIT -> {
+            val w = radius * 1.65f
+            val h = radius * 1.40f
+            val topLeft = Offset(center.x - w / 2f, center.y - h / 2f)
+            drawRoundRect(
+                color = FactoryColors.CircuitBoard,
+                topLeft = topLeft,
+                size = Size(w, h),
+                cornerRadius = CornerRadius(radius * 0.2f)
+            )
+            // Gold edge pins
+            val pinW = radius * 0.22f
+            val pinH = radius * 0.16f
+            drawRect(FactoryColors.CircuitTrace, Offset(center.x - w * 0.32f, topLeft.y - pinH * 0.4f), Size(pinW, pinH))
+            drawRect(FactoryColors.CircuitTrace, Offset(center.x + w * 0.10f, topLeft.y - pinH * 0.4f), Size(pinW, pinH))
+            drawRect(FactoryColors.CircuitTrace, Offset(center.x - w * 0.32f, topLeft.y + h - pinH * 0.6f), Size(pinW, pinH))
+            drawRect(FactoryColors.CircuitTrace, Offset(center.x + w * 0.10f, topLeft.y + h - pinH * 0.6f), Size(pinW, pinH))
+            // Center IC chip
+            val chipS = radius * 0.76f
+            drawRoundRect(
+                color = FactoryColors.CircuitChip,
+                topLeft = Offset(center.x - chipS / 2f, center.y - chipS / 2f),
+                size = Size(chipS, chipS),
+                cornerRadius = CornerRadius(radius * 0.1f)
+            )
+        }
+
+        ItemType.MOTOR -> {
+            val w = radius * 1.56f
+            val h = radius * 1.24f
+            // Drive shaft protruding right
+            drawRoundRect(
+                color = FactoryColors.MotorShaft,
+                topLeft = Offset(center.x + w * 0.25f, center.y - h * 0.18f),
+                size = Size(radius * 0.62f, h * 0.36f),
+                cornerRadius = CornerRadius(2f)
+            )
+            // Motor housing
+            drawRoundRect(
+                color = FactoryColors.MotorBody,
+                topLeft = Offset(center.x - w * 0.52f, center.y - h / 2f),
+                size = Size(w * 0.92f, h),
+                cornerRadius = CornerRadius(radius * 0.24f)
+            )
+            // Copper stator band
+            drawRoundRect(
+                color = FactoryColors.MotorCore,
+                topLeft = Offset(center.x - w * 0.26f, center.y - h * 0.38f),
+                size = Size(w * 0.36f, h * 0.76f),
+                cornerRadius = CornerRadius(radius * 0.12f)
             )
         }
     }
@@ -123,7 +196,6 @@ private fun DrawScope.drawOreChunk(
     drawPath(path, color = baseColor)
     drawPath(path, color = Color.White.copy(alpha = 0.22f), style = Stroke(width = (radius * 0.1f).coerceAtLeast(1f)))
 
-    // Metallic flecks
     drawCircle(speckColor, radius * 0.18f, center + Offset(-radius * 0.25f, -radius * 0.18f))
     drawCircle(speckColor, radius * 0.14f, center + Offset(radius * 0.22f, radius * 0.20f))
     drawCircle(speckColor, radius * 0.11f, center + Offset(radius * 0.15f, -radius * 0.30f))
@@ -144,7 +216,6 @@ private fun DrawScope.drawIngotBar(
         size = Size(w, h),
         cornerRadius = CornerRadius(radius * 0.25f)
     )
-    // Top bevel highlight
     val insetW = w * 0.68f
     val insetH = h * 0.34f
     drawRoundRect(

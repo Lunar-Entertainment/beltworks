@@ -34,6 +34,19 @@ object FactoryColors {
     val SplitterAccent = Color(0xFF06B6D4)
     val SplitterBody = Color(0xFF13313D)
 
+    val BridgeAccent = Color(0xFF94A3B8)
+    val BridgeDeck = Color(0xFF334155)
+    val BridgeUnderpass = Color(0xFF151B28)
+
+    val FilterAccent = Color(0xFF14B8A6)
+    val FilterBody = Color(0xFF103332)
+
+    val OverflowAccent = Color(0xFFF59E0B)
+    val OverflowBody = Color(0xFF3B2B10)
+
+    val IncineratorAccent = Color(0xFFEF4444)
+    val IncineratorBody = Color(0xFF3B1519)
+
     val SmelterAccent = Color(0xFFF97316)
     val SmelterGlow = Color(0xFFEF4444)
     val SmelterBody = Color(0xFF3A1F18)
@@ -59,7 +72,17 @@ object FactoryColors {
     val CopperOreSpeck = Color(0xFFFDBA74)
     val CopperIngot = Color(0xFFFB923C)
     val CopperIngotHighlight = Color(0xFFFED7AA)
+    val CopperWire = Color(0xFFF97316)
+    val CopperWireCoil = Color(0xFFFDBA74)
 
     val GearGold = Color(0xFFFBBF24)
     val GearDark = Color(0xFFB45309)
+
+    val CircuitBoard = Color(0xFF16A34A)
+    val CircuitTrace = Color(0xFFFACC15)
+    val CircuitChip = Color(0xFF0F172A)
+
+    val MotorBody = Color(0xFF0EA5E9)
+    val MotorCore = Color(0xFFEA580C)
+    val MotorShaft = Color(0xFFE2E8F0)
 }

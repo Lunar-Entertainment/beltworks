@@ -22,6 +22,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import com.microfactory.sim.Direction
 import com.microfactory.sim.FactorySimulation
 import com.microfactory.sim.GridCoord
+import com.microfactory.sim.ItemType
 import com.microfactory.sim.MachineStatus
 import com.microfactory.sim.TileEntity
 import kotlin.math.PI
@@ -29,13 +30,17 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.min
 
-enum class BuildTool(val label: String, val shortHint: String) {
-    BELT("Belt", "Drag across cells to build & curve belts • Tap to rotate"),
-    SPLITTER("Splitter", "Alternates items 50/50 left & right • Tap to rotate"),
-    SMELTER("Smelter", "Smelts Ore → Ingot (2 ticks) • Tap to rotate"),
-    PRESS("Press", "Stamps Iron Ingot → Iron Plate (2 ticks) • Tap to rotate"),
-    ASSEMBLER("Assembler", "Crafts 2 Iron Plates → 1 Gear (3 ticks) • Tap to rotate"),
-    BULLDOZE("Bulldoze", "Tap or drag to remove belts & machines")
+enum class BuildTool(val label: String, val shortHint: String, val unlockedFromLevel: Int = 1) {
+    BELT("Belt", "Drag to route & curve belts • Tap to rotate & connect", 1),
+    SPLITTER("Splitter", "Alternates items 50/50 left & right • Tap to rotate", 1),
+    BRIDGE("Bridge", "Crosses horizontal & vertical lanes without mixing • Tap to rotate", 9),
+    SMELTER("Smelter", "Smelts Iron/Copper Ore → Ingot (2t) • Tap to rotate", 1),
+    PRESS("Press", "Stamps Iron → Plate or Copper → Wire (2t) • Tap to rotate", 1),
+    ASSEMBLER("Assembler", "Crafts Gear, Circuit, or Motor • Tap to rotate", 1),
+    FILTER("Filter", "Routes matching item to green port • Pick item below", 31),
+    OVERFLOW("Overflow", "Prioritizes main port; spills excess when full • Tap to rotate", 45),
+    INCINERATOR("Trash", "Destroys unwanted items on contact to prevent jams", 35),
+    BULLDOZE("Bulldoze", "Tap or drag to remove belts & machines", 1)
 }
 
 private data class GridMetrics(
@@ -55,13 +60,10 @@ private data class GridMetrics(
 
     fun cellTopLeft(coord: GridCoord): Offset =
         Offset(originX + coord.x * cellSize, originY + coord.y * cellSize)
-
-    fun cellCenter(coord: GridCoord): Offset =
-        Offset(originX + (coord.x + 0.5f) * cellSize, originY + (coord.y + 0.5f) * cellSize)
 }
 
 private fun computeGridMetrics(canvasSize: Size, gridWidth: Int, gridHeight: Int): GridMetrics {
-    val padding = 12f
+    val padding = 10f
     val availW = (canvasSize.width - padding * 2f).coerceAtLeast(1f)
     val availH = (canvasSize.height - padding * 2f).coerceAtLeast(1f)
     val cellSize = min(availW / gridWidth, availH / gridHeight)
@@ -76,14 +78,19 @@ private fun computeGridMetrics(canvasSize: Size, gridWidth: Int, gridHeight: Int
 fun FactoryCanvas(
     simulation: FactorySimulation,
     selectedTool: BuildTool,
+    selectedFilterItem: ItemType,
+    activeFilterCoord: GridCoord?,
     tickAlpha: Float,
     beltPhase: Float,
     renderVersion: Int,
     onBoardChanged: () -> Unit,
+    onFilterSelected: (GridCoord?, ItemType?) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val currentTool by rememberUpdatedState(selectedTool)
+    val currentFilterItem by rememberUpdatedState(selectedFilterItem)
     val currentOnBoardChanged by rememberUpdatedState(onBoardChanged)
+    val currentOnFilterSelected by rememberUpdatedState(onFilterSelected)
 
     Canvas(
         modifier = modifier
@@ -152,17 +159,32 @@ fun FactoryCanvas(
                         }
                     }
 
-                    // Single tap (did not drag onto another cell)
                     if (!movedOutOfStart && currentTool != BuildTool.BULLDOZE) {
                         val existing = simulation.getTile(startCell)
                         if (existing.isPlayerEditable()) {
                             if (simulation.rotateTile(startCell)) {
+                                val updated = simulation.getTile(startCell)
+                                if (updated is TileEntity.Filter) {
+                                    currentOnFilterSelected(startCell, updated.filterItem)
+                                } else {
+                                    currentOnFilterSelected(null, null)
+                                }
                                 currentOnBoardChanged()
                             }
                         } else if (existing == TileEntity.Empty) {
-                            val placed = createDefaultTileForTool(simulation, startCell, currentTool)
+                            val placed = createDefaultTileForTool(
+                                sim = simulation,
+                                coord = startCell,
+                                tool = currentTool,
+                                filterItem = currentFilterItem
+                            )
                             if (placed != null) {
                                 simulation.setTile(startCell, placed)
+                                if (placed is TileEntity.Filter) {
+                                    currentOnFilterSelected(startCell, placed.filterItem)
+                                } else {
+                                    currentOnFilterSelected(null, null)
+                                }
                                 val outDir = when (placed) {
                                     is TileEntity.Belt -> placed.outputDir
                                     is TileEntity.Smelter -> placed.outputDir
@@ -180,13 +202,11 @@ fun FactoryCanvas(
                 }
             }
     ) {
-        // Read renderVersion so Canvas invalidates whenever simulation ticks or edits happen.
         @Suppress("UNUSED_EXPRESSION")
         renderVersion
 
         val metrics = computeGridMetrics(size, simulation.width, simulation.height)
 
-        // Outer industrial board frame
         drawRoundRect(
             color = FactoryColors.SurfaceElevated,
             topLeft = Offset(metrics.originX - 6f, metrics.originY - 6f),
@@ -201,7 +221,8 @@ fun FactoryCanvas(
             style = Stroke(width = 2f)
         )
 
-        // Pass 1: Grid cells and floor entities
+        // Pass 1: Grid cells, floor machines, and Bridge lower horizontal tracks
+        val bridges = mutableListOf<Pair<GridCoord, TileEntity.Bridge>>()
         for (y in 0 until simulation.height) {
             for (x in 0 until simulation.width) {
                 val coord = GridCoord(x, y)
@@ -216,11 +237,11 @@ fun FactoryCanvas(
                     cornerRadius = CornerRadius(metrics.cellSize * 0.12f)
                 )
                 drawRoundRect(
-                    color = FactoryColors.GridCellBorder,
+                    color = if (coord == activeFilterCoord) FactoryColors.FilterAccent else FactoryColors.GridCellBorder,
                     topLeft = topLeft + Offset(cellPad, cellPad),
                     size = Size(innerSize, innerSize),
                     cornerRadius = CornerRadius(metrics.cellSize * 0.12f),
-                    style = Stroke(width = 1.2f)
+                    style = Stroke(width = if (coord == activeFilterCoord) 2.2f else 1.2f)
                 )
 
                 when (val tile = simulation.getTile(coord)) {
@@ -228,6 +249,13 @@ fun FactoryCanvas(
                     TileEntity.Rock -> drawRockTile(topLeft, metrics.cellSize)
                     is TileEntity.Belt -> drawBeltTile(topLeft, metrics.cellSize, tile, beltPhase)
                     is TileEntity.Splitter -> drawSplitterTile(topLeft, metrics.cellSize, tile)
+                    is TileEntity.Bridge -> {
+                        drawBridgeUnderpass(topLeft, metrics.cellSize, tile, beltPhase)
+                        bridges.add(coord to tile)
+                    }
+                    is TileEntity.Filter -> drawFilterTile(topLeft, metrics.cellSize, tile)
+                    is TileEntity.Overflow -> drawOverflowTile(topLeft, metrics.cellSize, tile)
+                    TileEntity.Incinerator -> drawIncineratorTile(topLeft, metrics.cellSize)
                     is TileEntity.Smelter -> drawSmelterTile(topLeft, metrics.cellSize, tile, simulation.getMachineStatus(coord))
                     is TileEntity.Press -> drawPressTile(topLeft, metrics.cellSize, tile, simulation.getMachineStatus(coord))
                     is TileEntity.Assembler -> drawAssemblerTile(topLeft, metrics.cellSize, tile, simulation.getMachineStatus(coord))
@@ -237,8 +265,35 @@ fun FactoryCanvas(
             }
         }
 
-        // Pass 2: Smoothly interpolated moving items (plus items currently gliding into machines/hatches)
         val itemRadius = metrics.cellSize * 0.25f
+        val underpassItems = mutableListOf<com.microfactory.sim.MovingItem>()
+        val normalOrOverpassItems = mutableListOf<com.microfactory.sim.MovingItem>()
+        for (item in simulation.items) {
+            val tile = simulation.getTile(item.currentCoord)
+            if (tile is TileEntity.Bridge && !simulation.isItemOnVerticalBridgeLane(item.id)) {
+                underpassItems.add(item)
+            } else {
+                normalOrOverpassItems.add(item)
+            }
+        }
+
+        // Pass 2: Underpass items passing beneath Bridge decks
+        for (item in underpassItems) {
+            val ix = lerp(item.prevCoord.x.toFloat(), item.currentCoord.x.toFloat(), tickAlpha)
+            val iy = lerp(item.prevCoord.y.toFloat(), item.currentCoord.y.toFloat(), tickAlpha)
+            val center = Offset(
+                metrics.originX + (ix + 0.5f) * metrics.cellSize,
+                metrics.originY + (iy + 0.5f) * metrics.cellSize
+            )
+            drawItemShape(item.type, center, itemRadius * 0.9f)
+        }
+
+        // Pass 3: Elevated Bridge vertical overpass decks
+        for ((coord, bridge) in bridges) {
+            drawBridgeOverpass(metrics.cellTopLeft(coord), metrics.cellSize, bridge, beltPhase)
+        }
+
+        // Pass 4: Consumed glide-in items + active belt/overpass items
         for (item in simulation.consumedVisualItems) {
             val ix = lerp(item.prevCoord.x.toFloat(), item.currentCoord.x.toFloat(), tickAlpha)
             val iy = lerp(item.prevCoord.y.toFloat(), item.currentCoord.y.toFloat(), tickAlpha)
@@ -246,12 +301,11 @@ fun FactoryCanvas(
                 metrics.originX + (ix + 0.5f) * metrics.cellSize,
                 metrics.originY + (iy + 0.5f) * metrics.cellSize
             )
-            // Shrink slightly as item enters a machine or hatch
             val scale = (1f - tickAlpha * 0.45f).coerceIn(0.4f, 1f)
             drawItemShape(item.type, center, itemRadius * scale)
         }
 
-        for (item in simulation.items) {
+        for (item in normalOrOverpassItems) {
             val ix = lerp(item.prevCoord.x.toFloat(), item.currentCoord.x.toFloat(), tickAlpha)
             val iy = lerp(item.prevCoord.y.toFloat(), item.currentCoord.y.toFloat(), tickAlpha)
             val center = Offset(
@@ -294,14 +348,13 @@ private fun handleBeltDragStep(
             changed = true
         }
         is TileEntity.Belt -> {
-            // Keep existing inputDir unless backtracking directly into it; update outputDir to bend smoothly!
             val newInput = if (fromTile.inputDir == moveDir) moveDir.opposite() else fromTile.inputDir
             if (fromTile.inputDir != newInput || fromTile.outputDir != moveDir) {
                 sim.setTile(fromCell, TileEntity.Belt(inputDir = newInput, outputDir = moveDir))
                 changed = true
             }
         }
-        else -> Unit // Leave Spawner, Hatch, Rock, and Machines intact
+        else -> Unit
     }
 
     val toTile = sim.getTile(toCell)
@@ -333,6 +386,9 @@ private fun findIncomingDirection(
             is TileEntity.Press -> t.outputDir == expectedOutput
             is TileEntity.Assembler -> t.outputDir == expectedOutput
             is TileEntity.Splitter -> t.outputLeft == expectedOutput || t.outputRight == expectedOutput
+            is TileEntity.Filter -> t.matchDir == expectedOutput || t.otherDir == expectedOutput
+            is TileEntity.Overflow -> t.primaryDir == expectedOutput || t.overflowDir == expectedOutput
+            is TileEntity.Bridge -> t.horizDir == expectedOutput || t.vertDir == expectedOutput
             else -> false
         }
         if (pointsIntoCell) return dir
@@ -343,7 +399,8 @@ private fun findIncomingDirection(
 private fun createDefaultTileForTool(
     sim: FactorySimulation,
     coord: GridCoord,
-    tool: BuildTool
+    tool: BuildTool,
+    filterItem: ItemType
 ): TileEntity? {
     val incoming = findIncomingDirection(sim, coord)
     val defaultInput = incoming ?: Direction.WEST
@@ -358,6 +415,25 @@ private fun createDefaultTileForTool(
                 outputRight = inDir.rotateClockwise()
             )
         }
+        BuildTool.BRIDGE -> TileEntity.Bridge(horizDir = Direction.EAST, vertDir = Direction.SOUTH)
+        BuildTool.FILTER -> {
+            val inDir = incoming ?: Direction.NORTH
+            TileEntity.Filter(
+                inputDir = inDir,
+                matchDir = inDir.rotateCounterClockwise(),
+                otherDir = inDir.rotateClockwise(),
+                filterItem = filterItem
+            )
+        }
+        BuildTool.OVERFLOW -> {
+            val inDir = incoming ?: Direction.NORTH
+            TileEntity.Overflow(
+                inputDir = inDir,
+                primaryDir = inDir.opposite(),
+                overflowDir = inDir.rotateClockwise()
+            )
+        }
+        BuildTool.INCINERATOR -> TileEntity.Incinerator
         BuildTool.SMELTER -> TileEntity.Smelter(inputDir = defaultInput, outputDir = defaultOutput)
         BuildTool.PRESS -> TileEntity.Press(inputDir = defaultInput, outputDir = defaultOutput)
         BuildTool.ASSEMBLER -> TileEntity.Assembler(
@@ -485,6 +561,80 @@ private fun DrawScope.drawBeltTile(
     }
 }
 
+private fun DrawScope.drawBridgeUnderpass(
+    topLeft: Offset,
+    cellSize: Float,
+    bridge: TileEntity.Bridge,
+    beltPhase: Float
+) {
+    val start = edgeMidpoint(topLeft, cellSize, bridge.horizDir.opposite())
+    val end = edgeMidpoint(topLeft, cellSize, bridge.horizDir)
+    val trackWidth = cellSize * 0.48f
+    drawLine(
+        color = FactoryColors.BridgeUnderpass,
+        start = start,
+        end = end,
+        strokeWidth = trackWidth + cellSize * 0.08f,
+        cap = StrokeCap.Butt
+    )
+    drawLine(
+        color = FactoryColors.BeltTrack,
+        start = start,
+        end = end,
+        strokeWidth = trackWidth,
+        cap = StrokeCap.Butt
+    )
+    val angle = directionAngleDeg(bridge.horizDir)
+    val dx = end.x - start.x
+    val dy = end.y - start.y
+    for (i in 0 until 2) {
+        val t = (i / 2f + beltPhase) % 1f
+        drawChevron(Offset(start.x + dx * t, start.y + dy * t), angle, cellSize * 0.11f, FactoryColors.BeltChevronDim)
+    }
+}
+
+private fun DrawScope.drawBridgeOverpass(
+    topLeft: Offset,
+    cellSize: Float,
+    bridge: TileEntity.Bridge,
+    beltPhase: Float
+) {
+    val start = edgeMidpoint(topLeft, cellSize, bridge.vertDir.opposite())
+    val end = edgeMidpoint(topLeft, cellSize, bridge.vertDir)
+    val deckW = cellSize * 0.56f
+    // Subtle bridge shadow on underpass
+    drawLine(
+        color = Color.Black.copy(alpha = 0.45f),
+        start = start + Offset(3f, 0f),
+        end = end + Offset(3f, 0f),
+        strokeWidth = deckW + cellSize * 0.14f,
+        cap = StrokeCap.Butt
+    )
+    // Metallic bridge rails
+    drawLine(
+        color = FactoryColors.BridgeAccent,
+        start = start,
+        end = end,
+        strokeWidth = deckW + cellSize * 0.12f,
+        cap = StrokeCap.Butt
+    )
+    // Bridge deck
+    drawLine(
+        color = FactoryColors.BridgeDeck,
+        start = start,
+        end = end,
+        strokeWidth = deckW,
+        cap = StrokeCap.Butt
+    )
+    val angle = directionAngleDeg(bridge.vertDir)
+    val dx = end.x - start.x
+    val dy = end.y - start.y
+    for (i in 0 until 3) {
+        val t = (i / 3f + beltPhase) % 1f
+        drawChevron(Offset(start.x + dx * t, start.y + dy * t), angle, cellSize * 0.12f, FactoryColors.BeltChevron)
+    }
+}
+
 private fun DrawScope.drawChevron(
     center: Offset,
     angleDeg: Float,
@@ -560,7 +710,6 @@ private fun DrawScope.drawSplitterTile(
         color = if (!splitter.toggleLeft) FactoryColors.SplitterAccent else FactoryColors.TextMuted
     )
 
-    // Center diamond divider
     val r = cellSize * 0.16f
     val diamond = Path().apply {
         moveTo(center.x, center.y - r)
@@ -570,6 +719,60 @@ private fun DrawScope.drawSplitterTile(
         close()
     }
     drawPath(diamond, color = FactoryColors.SplitterAccent)
+}
+
+private fun DrawScope.drawFilterTile(
+    topLeft: Offset,
+    cellSize: Float,
+    filter: TileEntity.Filter
+) {
+    drawMachineChassis(topLeft, cellSize, FactoryColors.FilterBody, FactoryColors.FilterAccent)
+    drawPortArrow(topLeft, cellSize, filter.inputDir, isOutput = false, color = FactoryColors.TextPrimary)
+    drawPortArrow(topLeft, cellSize, filter.matchDir, isOutput = true, color = FactoryColors.HatchDoneAccent)
+    drawPortArrow(topLeft, cellSize, filter.otherDir, isOutput = true, color = FactoryColors.HatchAccent)
+
+    val center = Offset(topLeft.x + cellSize / 2f, topLeft.y + cellSize / 2f)
+    drawCircle(FactoryColors.Background.copy(alpha = 0.75f), cellSize * 0.22f, center)
+    drawItemShape(filter.filterItem, center, cellSize * 0.15f, drawShadow = false)
+}
+
+private fun DrawScope.drawOverflowTile(
+    topLeft: Offset,
+    cellSize: Float,
+    overflow: TileEntity.Overflow
+) {
+    drawMachineChassis(topLeft, cellSize, FactoryColors.OverflowBody, FactoryColors.OverflowAccent)
+    drawPortArrow(topLeft, cellSize, overflow.inputDir, isOutput = false, color = FactoryColors.TextPrimary)
+    drawPortArrow(topLeft, cellSize, overflow.primaryDir, isOutput = true, color = FactoryColors.BeltChevron)
+    drawPortArrow(topLeft, cellSize, overflow.overflowDir, isOutput = true, color = FactoryColors.OverflowAccent)
+
+    val center = Offset(topLeft.x + cellSize / 2f, topLeft.y + cellSize / 2f)
+    drawCircle(
+        color = FactoryColors.OverflowAccent,
+        radius = cellSize * 0.14f,
+        center = center,
+        style = Stroke(width = (cellSize * 0.05f).coerceAtLeast(2f))
+    )
+}
+
+private fun DrawScope.drawIncineratorTile(topLeft: Offset, cellSize: Float) {
+    drawMachineChassis(topLeft, cellSize, FactoryColors.IncineratorBody, FactoryColors.IncineratorAccent)
+    val center = Offset(topLeft.x + cellSize / 2f, topLeft.y + cellSize / 2f)
+    val r = cellSize * 0.22f
+    drawLine(
+        color = FactoryColors.IncineratorAccent,
+        start = center + Offset(-r, -r),
+        end = center + Offset(r, r),
+        strokeWidth = (cellSize * 0.07f).coerceAtLeast(2.2f),
+        cap = StrokeCap.Round
+    )
+    drawLine(
+        color = FactoryColors.IncineratorAccent,
+        start = center + Offset(r, -r),
+        end = center + Offset(-r, r),
+        strokeWidth = (cellSize * 0.07f).coerceAtLeast(2.2f),
+        cap = StrokeCap.Round
+    )
 }
 
 private fun DrawScope.drawSmelterTile(
@@ -682,7 +885,13 @@ private fun DrawScope.drawSpawnerTile(
     drawMachineChassis(topLeft, cellSize, FactoryColors.SpawnerBody, FactoryColors.SpawnerAccent)
     drawPortArrow(topLeft, cellSize, spawner.outputDir, isOutput = true, color = FactoryColors.SpawnerAccent)
     val center = Offset(topLeft.x + cellSize / 2f, topLeft.y + cellSize / 2f)
-    drawItemShape(spawner.itemType, center, cellSize * 0.20f, drawShadow = false)
+    val secondary = spawner.secondaryItemType
+    if (secondary == null) {
+        drawItemShape(spawner.itemType, center, cellSize * 0.20f, drawShadow = false)
+    } else {
+        drawItemShape(spawner.itemType, center + Offset(-cellSize * 0.13f, -cellSize * 0.06f), cellSize * 0.13f, drawShadow = false)
+        drawItemShape(secondary, center + Offset(cellSize * 0.13f, cellSize * 0.08f), cellSize * 0.13f, drawShadow = false)
+    }
 }
 
 private fun DrawScope.drawHatchTile(
@@ -704,7 +913,6 @@ private fun DrawScope.drawHatchTile(
     )
     drawItemShape(hatch.requiredItem, center, cellSize * 0.19f, drawShadow = false)
 
-    // Progress ring around hatch bay
     val ratio = (hatch.deliveredCount.toFloat() / hatch.targetCount.coerceAtLeast(1)).coerceIn(0f, 1f)
     if (ratio > 0f) {
         drawArc(

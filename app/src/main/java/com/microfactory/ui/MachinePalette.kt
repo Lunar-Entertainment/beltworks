@@ -37,13 +37,21 @@ import androidx.compose.ui.unit.sp
 import com.microfactory.render.BuildTool
 import com.microfactory.render.FactoryColors
 import com.microfactory.render.drawGear
+import com.microfactory.render.drawItemShape
+import com.microfactory.sim.ItemType
 
 @Composable
 fun MachinePalette(
+    levelId: Int,
     selectedTool: BuildTool,
+    selectedFilterItem: ItemType,
+    showFilterBar: Boolean,
     onSelectTool: (BuildTool) -> Unit,
+    onSelectFilterItem: (ItemType) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val visibleTools = BuildTool.entries.filter { levelId >= it.unlockedFromLevel }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -52,12 +60,61 @@ fun MachinePalette(
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        Text(
-            text = selectedTool.shortHint,
-            color = FactoryColors.TextSecondary,
-            fontSize = 11.sp,
-            maxLines = 1
-        )
+        if (showFilterBar) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Filter:",
+                    color = FactoryColors.FilterAccent,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                for (item in ItemType.entries) {
+                    val active = item == selectedFilterItem
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (active) FactoryColors.FilterBody else FactoryColors.GridCell)
+                            .border(
+                                1.dp,
+                                if (active) FactoryColors.FilterAccent else FactoryColors.GridCellBorder,
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { onSelectFilterItem(item) }
+                            .padding(horizontal = 7.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Canvas(modifier = Modifier.size(13.dp)) {
+                            drawItemShape(
+                                type = item,
+                                center = Offset(size.width / 2f, size.height / 2f),
+                                radius = size.minDimension * 0.44f,
+                                drawShadow = false
+                            )
+                        }
+                        Text(
+                            text = item.shortCode,
+                            color = if (active) FactoryColors.TextPrimary else FactoryColors.TextSecondary,
+                            fontSize = 10.sp,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        } else {
+            Text(
+                text = selectedTool.shortHint,
+                color = FactoryColors.TextSecondary,
+                fontSize = 11.sp,
+                maxLines = 1
+            )
+        }
 
         Row(
             modifier = Modifier
@@ -66,12 +123,12 @@ fun MachinePalette(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            for (tool in BuildTool.entries) {
+            for (tool in visibleTools) {
                 val isSelected = tool == selectedTool
                 val accent = toolAccentColor(tool)
                 Column(
                     modifier = Modifier
-                        .width(66.dp)
+                        .width(64.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(if (isSelected) accent.copy(alpha = 0.16f) else FactoryColors.GridCell)
                         .border(
@@ -80,17 +137,17 @@ fun MachinePalette(
                             shape = RoundedCornerShape(10.dp)
                         )
                         .clickable { onSelectTool(tool) }
-                        .padding(vertical = 8.dp, horizontal = 4.dp),
+                        .padding(vertical = 7.dp, horizontal = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Canvas(modifier = Modifier.size(26.dp)) {
+                    Canvas(modifier = Modifier.size(24.dp)) {
                         drawToolIcon(tool, accent)
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = tool.label,
                         color = if (isSelected) FactoryColors.TextPrimary else FactoryColors.TextSecondary,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         maxLines = 1
                     )
@@ -103,9 +160,13 @@ fun MachinePalette(
 private fun toolAccentColor(tool: BuildTool): Color = when (tool) {
     BuildTool.BELT -> FactoryColors.BeltChevron
     BuildTool.SPLITTER -> FactoryColors.SplitterAccent
+    BuildTool.BRIDGE -> FactoryColors.BridgeAccent
     BuildTool.SMELTER -> FactoryColors.SmelterAccent
     BuildTool.PRESS -> FactoryColors.PressAccent
     BuildTool.ASSEMBLER -> FactoryColors.AssemblerAccent
+    BuildTool.FILTER -> FactoryColors.FilterAccent
+    BuildTool.OVERFLOW -> FactoryColors.OverflowAccent
+    BuildTool.INCINERATOR -> FactoryColors.IncineratorAccent
     BuildTool.BULLDOZE -> FactoryColors.BulldozeAccent
 }
 
@@ -145,6 +206,86 @@ private fun DrawScope.drawToolIcon(tool: BuildTool, accent: Color) {
             }
             drawPath(path, color = accent, style = Stroke(width = 2.8f, cap = StrokeCap.Round, join = StrokeJoin.Round))
             drawCircle(accent, radius = w * 0.14f, center = Offset(cx, cy))
+        }
+
+        BuildTool.BRIDGE -> {
+            // Underpass horizontal line
+            drawLine(
+                color = FactoryColors.BeltTrack,
+                start = Offset(w * 0.08f, cy),
+                end = Offset(w * 0.92f, cy),
+                strokeWidth = h * 0.28f,
+                cap = StrokeCap.Butt
+            )
+            // Overpass vertical bridge deck
+            drawLine(
+                color = accent,
+                start = Offset(cx, h * 0.08f),
+                end = Offset(cx, h * 0.92f),
+                strokeWidth = w * 0.34f,
+                cap = StrokeCap.Butt
+            )
+            drawLine(
+                color = FactoryColors.BridgeDeck,
+                start = Offset(cx, h * 0.08f),
+                end = Offset(cx, h * 0.92f),
+                strokeWidth = w * 0.22f,
+                cap = StrokeCap.Butt
+            )
+        }
+
+        BuildTool.FILTER -> {
+            drawRoundRect(
+                color = FactoryColors.FilterBody,
+                topLeft = Offset(w * 0.12f, h * 0.12f),
+                size = Size(w * 0.76f, h * 0.76f),
+                cornerRadius = CornerRadius(6f)
+            )
+            drawRoundRect(
+                color = accent,
+                topLeft = Offset(w * 0.12f, h * 0.12f),
+                size = Size(w * 0.76f, h * 0.76f),
+                cornerRadius = CornerRadius(6f),
+                style = Stroke(width = 2.2f)
+            )
+            drawCircle(FactoryColors.HatchDoneAccent, w * 0.16f, Offset(w * 0.36f, cy))
+            drawCircle(FactoryColors.HatchAccent, w * 0.14f, Offset(w * 0.66f, cy))
+        }
+
+        BuildTool.OVERFLOW -> {
+            drawRoundRect(
+                color = FactoryColors.OverflowBody,
+                topLeft = Offset(w * 0.12f, h * 0.12f),
+                size = Size(w * 0.76f, h * 0.76f),
+                cornerRadius = CornerRadius(6f)
+            )
+            drawRoundRect(
+                color = accent,
+                topLeft = Offset(w * 0.12f, h * 0.12f),
+                size = Size(w * 0.76f, h * 0.76f),
+                cornerRadius = CornerRadius(6f),
+                style = Stroke(width = 2.2f)
+            )
+            drawLine(FactoryColors.BeltChevron, Offset(cx, h * 0.78f), Offset(cx, h * 0.24f), strokeWidth = 2.6f, cap = StrokeCap.Round)
+            drawLine(accent, Offset(cx, cy), Offset(w * 0.76f, cy), strokeWidth = 2.4f, cap = StrokeCap.Round)
+        }
+
+        BuildTool.INCINERATOR -> {
+            drawRoundRect(
+                color = FactoryColors.IncineratorBody,
+                topLeft = Offset(w * 0.12f, h * 0.12f),
+                size = Size(w * 0.76f, h * 0.76f),
+                cornerRadius = CornerRadius(6f)
+            )
+            drawRoundRect(
+                color = accent,
+                topLeft = Offset(w * 0.12f, h * 0.12f),
+                size = Size(w * 0.76f, h * 0.76f),
+                cornerRadius = CornerRadius(6f),
+                style = Stroke(width = 2.2f)
+            )
+            drawLine(accent, Offset(w * 0.3f, h * 0.3f), Offset(w * 0.7f, h * 0.7f), strokeWidth = 2.5f, cap = StrokeCap.Round)
+            drawLine(accent, Offset(w * 0.7f, h * 0.3f), Offset(w * 0.3f, h * 0.7f), strokeWidth = 2.5f, cap = StrokeCap.Round)
         }
 
         BuildTool.SMELTER -> {

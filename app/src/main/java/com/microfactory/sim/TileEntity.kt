@@ -12,7 +12,8 @@ sealed interface TileEntity {
     data class Spawner(
         val itemType: ItemType,
         val outputDir: Direction,
-        val spawnIntervalTicks: Int
+        val spawnIntervalTicks: Int,
+        val secondaryItemType: ItemType? = null
     ) : TileEntity
 
     data class Hatch(
@@ -32,6 +33,38 @@ sealed interface TileEntity {
         val outputRight: Direction,
         var toggleLeft: Boolean = true
     ) : TileEntity
+
+    /**
+     * Crosses two orthogonal belt lanes (horizontal + vertical) without mixing items.
+     */
+    data class Bridge(
+        val horizDir: Direction = Direction.EAST,
+        val vertDir: Direction = Direction.SOUTH
+    ) : TileEntity
+
+    /**
+     * Routes items matching [filterItem] to [matchDir] and all other items to [otherDir].
+     */
+    data class Filter(
+        val inputDir: Direction,
+        val matchDir: Direction,
+        val otherDir: Direction,
+        val filterItem: ItemType = ItemType.IRON_ORE
+    ) : TileEntity
+
+    /**
+     * Prioritizes [primaryDir]; spills excess items to [overflowDir] only when [primaryDir] is blocked.
+     */
+    data class Overflow(
+        val inputDir: Direction,
+        val primaryDir: Direction,
+        val overflowDir: Direction
+    ) : TileEntity
+
+    /**
+     * Destroys any incoming item from any side to keep mixed lines from backing up.
+     */
+    data object Incinerator : TileEntity
 
     data class Smelter(
         val inputDir: Direction,
@@ -53,7 +86,15 @@ sealed interface TileEntity {
     ) : TileEntity
 
     fun isPlayerEditable(): Boolean = when (this) {
-        is Belt, is Splitter, is Smelter, is Press, is Assembler -> true
+        is Belt,
+        is Splitter,
+        is Bridge,
+        is Filter,
+        is Overflow,
+        Incinerator,
+        is Smelter,
+        is Press,
+        is Assembler -> true
         Empty, Rock, is Spawner, is Hatch -> false
     }
 
@@ -66,6 +107,20 @@ sealed interface TileEntity {
             inputDir = inputDir.rotateClockwise(),
             outputLeft = outputLeft.rotateClockwise(),
             outputRight = outputRight.rotateClockwise()
+        )
+        is Bridge -> copy(
+            horizDir = vertDir.rotateClockwise(),
+            vertDir = horizDir.rotateClockwise()
+        )
+        is Filter -> copy(
+            inputDir = inputDir.rotateClockwise(),
+            matchDir = matchDir.rotateClockwise(),
+            otherDir = otherDir.rotateClockwise()
+        )
+        is Overflow -> copy(
+            inputDir = inputDir.rotateClockwise(),
+            primaryDir = primaryDir.rotateClockwise(),
+            overflowDir = overflowDir.rotateClockwise()
         )
         is Smelter -> copy(
             inputDir = inputDir.rotateClockwise(),
@@ -80,6 +135,6 @@ sealed interface TileEntity {
             inputDirB = inputDirB.rotateClockwise(),
             outputDir = outputDir.rotateClockwise()
         )
-        Empty, Rock, is Spawner, is Hatch -> this
+        Incinerator, Empty, Rock, is Spawner, is Hatch -> this
     }
 }

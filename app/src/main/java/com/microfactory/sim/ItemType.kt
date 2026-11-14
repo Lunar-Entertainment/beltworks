@@ -6,5 +6,8 @@ enum class ItemType(val displayName: String, val shortCode: String) {
     IRON_PLATE("Iron Plate", "Plate"),
     COPPER_ORE("Copper Ore", "Cu Ore"),
     COPPER_INGOT("Copper Ingot", "Cu Bar"),
-    GEAR("Gear", "Gear")
+    COPPER_WIRE("Copper Wire", "Wire"),
+    GEAR("Gear", "Gear"),
+    CIRCUIT("Circuit", "Circuit"),
+    MOTOR("Motor", "Motor")
 }

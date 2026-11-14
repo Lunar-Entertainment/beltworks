@@ -27,6 +27,30 @@ class FactorySimulation(
         const val BASE_TICKS_PER_SECOND = 4.0
         const val TICK_DURATION_NANOS = 250_000_000L
         private const val IPM_WINDOW_TICKS = 240L // 60 simulated seconds at 4 ticks/sec
+
+        private const val LANE_NORMAL = 0
+        private const val LANE_BRIDGE_HORIZ = 1
+        private const val LANE_BRIDGE_VERT = 2
+
+        fun pressOutputFor(input: ItemType): ItemType? = when (input) {
+            ItemType.IRON_INGOT -> ItemType.IRON_PLATE
+            ItemType.COPPER_INGOT -> ItemType.COPPER_WIRE
+            else -> null
+        }
+
+        fun assemblerOutputFor(a: ItemType, b: ItemType): ItemType? = when {
+            a == ItemType.IRON_PLATE && b == ItemType.IRON_PLATE -> ItemType.GEAR
+            (a == ItemType.IRON_PLATE && b == ItemType.COPPER_WIRE) ||
+                (a == ItemType.COPPER_WIRE && b == ItemType.IRON_PLATE) -> ItemType.CIRCUIT
+            (a == ItemType.GEAR && b == ItemType.CIRCUIT) ||
+                (a == ItemType.CIRCUIT && b == ItemType.GEAR) -> ItemType.MOTOR
+            else -> null
+        }
+
+        fun isAssemblerIngredient(type: ItemType): Boolean = when (type) {
+            ItemType.IRON_PLATE, ItemType.COPPER_WIRE, ItemType.GEAR, ItemType.CIRCUIT -> true
+            else -> false
+        }
     }
 
     private var grid: Array<Array<TileEntity>> =
@@ -34,8 +58,10 @@ class FactorySimulation(
 
     private val activeItems = mutableListOf<MovingItem>()
     private val recentConsumedItems = mutableListOf<MovingItem>()
+    private val bridgeVerticalItems = HashSet<Long>()
 
     private val spawnerCooldowns = mutableMapOf<GridCoord, Int>()
+    private val spawnerSecondaryTurn = mutableMapOf<GridCoord, Boolean>()
     private val singleMachines = mutableMapOf<GridCoord, SingleMachineState>()
     private val assemblers = mutableMapOf<GridCoord, AssemblerState>()
     private val deliveryHistoryTicks = ArrayDeque<Long>()
@@ -93,6 +119,8 @@ class FactorySimulation(
             return hasHatch
         }
 
+    private data class OccupantSlot(val coord: GridCoord, val lane: Int)
+
     private data class SingleMachineState(
         var inputItem: ItemType? = null,
         var outputItem: ItemType? = null,
@@ -102,8 +130,8 @@ class FactorySimulation(
     )
 
     private data class AssemblerState(
-        var slotAFilled: Boolean = false,
-        var slotBFilled: Boolean = false,
+        var slotAItem: ItemType? = null,
+        var slotBItem: ItemType? = null,
         var outputItem: ItemType? = null,
         var ticksDone: Int = 0,
         var totalTicks: Int = 3,
@@ -112,10 +140,18 @@ class FactorySimulation(
     )
 
     private sealed interface PlannedAction {
-        data class MoveToTile(val target: GridCoord, val splitterUsedDir: Direction?) : PlannedAction
+        data class MoveToTile(
+            val target: GridCoord,
+            val targetLane: Int,
+            val splitterUsedDir: Direction?
+        ) : PlannedAction
+
         data class EnterHatch(val target: GridCoord) : PlannedAction
+        data class EnterIncinerator(val target: GridCoord) : PlannedAction
         data class EnterMachine(val target: GridCoord, val slot: Int) : PlannedAction
     }
+
+    fun isItemOnVerticalBridgeLane(itemId: Long): Boolean = itemId in bridgeVerticalItems
 
     fun inBounds(coord: GridCoord): Boolean =
         coord.x in 0 until width && coord.y in 0 until height
@@ -130,11 +166,21 @@ class FactorySimulation(
             is TileEntity.Splitter -> tile.copy()
             else -> tile
         }
+        val removedIds = activeItems.filter { it.currentCoord == coord }.map { it.id }
+        bridgeVerticalItems.removeAll(removedIds.toSet())
         activeItems.removeAll { it.currentCoord == coord }
         recentConsumedItems.removeAll { it.currentCoord == coord }
         spawnerCooldowns.remove(coord)
+        spawnerSecondaryTurn.remove(coord)
         singleMachines.remove(coord)
         assemblers.remove(coord)
+    }
+
+    fun setFilterItem(coord: GridCoord, itemType: ItemType): Boolean {
+        if (!inBounds(coord)) return false
+        val current = grid[coord.y][coord.x] as? TileEntity.Filter ?: return false
+        grid[coord.y][coord.x] = current.copy(filterItem = itemType)
+        return true
     }
 
     fun rotateTile(coord: GridCoord): Boolean {
@@ -232,6 +278,9 @@ class FactorySimulation(
             is TileEntity.Press -> t.outputDir == expectedDir
             is TileEntity.Assembler -> t.outputDir == expectedDir
             is TileEntity.Splitter -> t.outputLeft == expectedDir || t.outputRight == expectedDir
+            is TileEntity.Filter -> t.matchDir == expectedDir || t.otherDir == expectedDir
+            is TileEntity.Overflow -> t.primaryDir == expectedDir || t.overflowDir == expectedDir
+            is TileEntity.Bridge -> t.horizDir == expectedDir || t.vertDir == expectedDir
             else -> false
         }
     }
@@ -239,10 +288,14 @@ class FactorySimulation(
     private fun canAcceptOutputFrom(targetCoord: GridCoord, sourceCoord: GridCoord): Boolean {
         if (!inBounds(targetCoord)) return false
         val sideFromSource = targetCoord.directionTo(sourceCoord) ?: return false
+        val moveDir = sideFromSource.opposite()
         return when (val t = grid[targetCoord.y][targetCoord.x]) {
-            is TileEntity.Hatch -> true
+            is TileEntity.Hatch, TileEntity.Incinerator -> true
             is TileEntity.Belt -> t.outputDir != sideFromSource
             is TileEntity.Splitter -> t.inputDir == sideFromSource
+            is TileEntity.Filter -> t.inputDir == sideFromSource
+            is TileEntity.Overflow -> t.inputDir == sideFromSource
+            is TileEntity.Bridge -> t.horizDir == moveDir || t.vertDir == moveDir
             is TileEntity.Smelter -> t.inputDir == sideFromSource
             is TileEntity.Press -> t.inputDir == sideFromSource
             is TileEntity.Assembler -> t.inputDirA == sideFromSource || t.inputDirB == sideFromSource
@@ -276,7 +329,9 @@ class FactorySimulation(
         }
         activeItems.clear()
         recentConsumedItems.clear()
+        bridgeVerticalItems.clear()
         spawnerCooldowns.clear()
+        spawnerSecondaryTurn.clear()
         singleMachines.clear()
         assemblers.clear()
         deliveryHistoryTicks.clear()
@@ -316,7 +371,7 @@ class FactorySimulation(
     }
 
     fun getMachineStatus(coord: GridCoord): MachineStatus? {
-        return when (val tile = getTile(coord)) {
+        return when (getTile(coord)) {
             is TileEntity.Smelter, is TileEntity.Press -> {
                 val state = singleMachines[coord] ?: return MachineStatus(0, 1, 0f, false, false)
                 val progress = if (state.totalTicks > 0 && state.inputItem != null) {
@@ -332,7 +387,7 @@ class FactorySimulation(
             }
             is TileEntity.Assembler -> {
                 val state = assemblers[coord] ?: return MachineStatus(0, 2, 0f, false, false)
-                val count = (if (state.slotAFilled) 1 else 0) + (if (state.slotBFilled) 1 else 0)
+                val count = (if (state.slotAItem != null) 1 else 0) + (if (state.slotBItem != null) 1 else 0)
                 val progress = if (state.totalTicks > 0 && state.isProcessing) {
                     (state.ticksDone.toFloat() / state.totalTicks).coerceIn(0f, 1f)
                 } else 0f
@@ -342,12 +397,21 @@ class FactorySimulation(
                     progress = if (state.outputItem != null) 1f else progress,
                     isProcessing = state.isProcessing,
                     hasOutputReady = state.outputItem != null,
-                    slotAFilled = state.slotAFilled,
-                    slotBFilled = state.slotBFilled
+                    slotAFilled = state.slotAItem != null,
+                    slotBFilled = state.slotBItem != null
                 )
             }
             else -> null
         }
+    }
+
+    private fun slotForItem(item: MovingItem): OccupantSlot {
+        val lane = if (getTile(item.currentCoord) is TileEntity.Bridge) {
+            if (item.id in bridgeVerticalItems) LANE_BRIDGE_VERT else LANE_BRIDGE_HORIZ
+        } else {
+            LANE_NORMAL
+        }
+        return OccupantSlot(item.currentCoord, lane)
     }
 
     /**
@@ -357,23 +421,22 @@ class FactorySimulation(
         tickCount++
         recentConsumedItems.clear()
 
-        // Snapshot previous coordinates for smooth frame interpolation.
         for (item in activeItems) {
             item.prevCoord = item.currentCoord
         }
 
-        // Index initial occupancy by coordinate.
-        val occupantAt = HashMap<GridCoord, MovingItem>(activeItems.size * 2)
+        val occupantAt = HashMap<OccupantSlot, MovingItem>(activeItems.size * 2)
         for (item in activeItems) {
-            occupantAt[item.currentCoord] = item
+            occupantAt[slotForItem(item)] = item
         }
 
-        // Pass 1: Back-to-front recursive planning & cell reservation.
+        // Pass 1: Back-to-front recursive planning & cell/lane reservation.
         val plannedMoves = HashMap<Long, PlannedAction>()
-        val reservedTileTargets = HashSet<GridCoord>()
-        val reservedMachineSlots = HashSet<Pair<GridCoord, Int>>()
-        val decision = HashMap<GridCoord, Boolean>()
-        val visiting = HashSet<GridCoord>()
+        val reservedTileSlots = HashSet<OccupantSlot>()
+        val reservedMachineSlots = HashMap<Pair<GridCoord, Int>, ItemType>()
+        val reservedHatchDeliveries = HashMap<GridCoord, Int>()
+        val decision = HashMap<OccupantSlot, Boolean>()
+        val visiting = HashSet<OccupantSlot>()
 
         fun canSmelterAccept(coord: GridCoord, type: ItemType): Boolean {
             if (type != ItemType.IRON_ORE && type != ItemType.COPPER_ORE) return false
@@ -382,29 +445,38 @@ class FactorySimulation(
         }
 
         fun canPressAccept(coord: GridCoord, type: ItemType): Boolean {
-            if (type != ItemType.IRON_INGOT) return false
+            if (pressOutputFor(type) == null) return false
             val state = singleMachines[coord] ?: return true
             return state.inputItem == null && state.outputItem == null
         }
 
         fun canAssemblerAccept(coord: GridCoord, fromCoord: GridCoord, tile: TileEntity.Assembler, type: ItemType): Int? {
-            if (type != ItemType.IRON_PLATE) return null
+            if (!isAssemblerIngredient(type)) return null
             val state = assemblers[coord] ?: AssemblerState(totalTicks = tile.processTicks)
             if (state.outputItem != null || state.isProcessing) return null
-            if (fromCoord == coord + tile.inputDirA && !state.slotAFilled && (coord to 0) !in reservedMachineSlots) {
-                return 0
+
+            val effectiveA = state.slotAItem ?: reservedMachineSlots[coord to 0]
+            val effectiveB = state.slotBItem ?: reservedMachineSlots[coord to 1]
+
+            if (fromCoord == coord + tile.inputDirA && effectiveA == null) {
+                if (effectiveB == null || assemblerOutputFor(type, effectiveB) != null) {
+                    return 0
+                }
             }
-            if (fromCoord == coord + tile.inputDirB && !state.slotBFilled && (coord to 1) !in reservedMachineSlots) {
-                return 1
+            if (fromCoord == coord + tile.inputDirB && effectiveB == null) {
+                if (effectiveA == null || assemblerOutputFor(effectiveA, type) != null) {
+                    return 1
+                }
             }
             return null
         }
 
-        fun resolveMove(pos: GridCoord): Boolean {
-            decision[pos]?.let { return it }
-            if (pos in visiting) return false
+        fun resolveMove(slot: OccupantSlot): Boolean {
+            decision[slot]?.let { return it }
+            if (slot in visiting) return false
 
-            val item = occupantAt[pos] ?: return true
+            val item = occupantAt[slot] ?: return true
+            val pos = slot.coord
             val tile = getTile(pos)
             val candidateDirs = when (tile) {
                 is TileEntity.Belt -> listOf(tile.outputDir)
@@ -413,13 +485,24 @@ class FactorySimulation(
                 } else {
                     listOf(tile.outputRight, tile.outputLeft)
                 }
+                is TileEntity.Filter -> if (item.type == tile.filterItem) {
+                    listOf(tile.matchDir)
+                } else {
+                    listOf(tile.otherDir)
+                }
+                is TileEntity.Overflow -> listOf(tile.primaryDir, tile.overflowDir)
+                is TileEntity.Bridge -> if (slot.lane == LANE_BRIDGE_VERT) {
+                    listOf(tile.vertDir)
+                } else {
+                    listOf(tile.horizDir)
+                }
                 else -> {
-                    decision[pos] = false
+                    decision[slot] = false
                     return false
                 }
             }
 
-            visiting.add(pos)
+            visiting.add(slot)
 
             for (outDir in candidateDirs) {
                 val target = pos + outDir
@@ -428,12 +511,23 @@ class FactorySimulation(
 
                 when (targetTile) {
                     is TileEntity.Hatch -> {
-                        if (item.type == targetTile.requiredItem) {
+                        val reserved = reservedHatchDeliveries[target] ?: 0
+                        if (item.type == targetTile.requiredItem &&
+                            targetTile.deliveredCount + reserved < targetTile.targetCount
+                        ) {
+                            reservedHatchDeliveries[target] = reserved + 1
                             plannedMoves[item.id] = PlannedAction.EnterHatch(target)
-                            visiting.remove(pos)
-                            decision[pos] = true
+                            visiting.remove(slot)
+                            decision[slot] = true
                             return true
                         }
+                    }
+
+                    TileEntity.Incinerator -> {
+                        plannedMoves[item.id] = PlannedAction.EnterIncinerator(target)
+                        visiting.remove(slot)
+                        decision[slot] = true
+                        return true
                     }
 
                     is TileEntity.Smelter -> {
@@ -441,10 +535,10 @@ class FactorySimulation(
                             canSmelterAccept(target, item.type) &&
                             (target to 0) !in reservedMachineSlots
                         ) {
-                            reservedMachineSlots.add(target to 0)
+                            reservedMachineSlots[target to 0] = item.type
                             plannedMoves[item.id] = PlannedAction.EnterMachine(target, 0)
-                            visiting.remove(pos)
-                            decision[pos] = true
+                            visiting.remove(slot)
+                            decision[slot] = true
                             return true
                         }
                     }
@@ -454,35 +548,36 @@ class FactorySimulation(
                             canPressAccept(target, item.type) &&
                             (target to 0) !in reservedMachineSlots
                         ) {
-                            reservedMachineSlots.add(target to 0)
+                            reservedMachineSlots[target to 0] = item.type
                             plannedMoves[item.id] = PlannedAction.EnterMachine(target, 0)
-                            visiting.remove(pos)
-                            decision[pos] = true
+                            visiting.remove(slot)
+                            decision[slot] = true
                             return true
                         }
                     }
 
                     is TileEntity.Assembler -> {
-                        val slot = canAssemblerAccept(target, pos, targetTile, item.type)
-                        if (slot != null) {
-                            reservedMachineSlots.add(target to slot)
-                            plannedMoves[item.id] = PlannedAction.EnterMachine(target, slot)
-                            visiting.remove(pos)
-                            decision[pos] = true
+                        val machineSlot = canAssemblerAccept(target, pos, targetTile, item.type)
+                        if (machineSlot != null) {
+                            reservedMachineSlots[target to machineSlot] = item.type
+                            plannedMoves[item.id] = PlannedAction.EnterMachine(target, machineSlot)
+                            visiting.remove(slot)
+                            decision[slot] = true
                             return true
                         }
                     }
 
                     is TileEntity.Belt -> {
                         val canEnter = pos != target + targetTile.outputDir
-                        if (canEnter && target !in reservedTileTargets) {
-                            val targetFree = (target !in occupantAt) || resolveMove(target)
+                        val targetSlot = OccupantSlot(target, LANE_NORMAL)
+                        if (canEnter && targetSlot !in reservedTileSlots) {
+                            val targetFree = (targetSlot !in occupantAt) || resolveMove(targetSlot)
                             if (targetFree) {
-                                reservedTileTargets.add(target)
+                                reservedTileSlots.add(targetSlot)
                                 val splitterDir = if (tile is TileEntity.Splitter) outDir else null
-                                plannedMoves[item.id] = PlannedAction.MoveToTile(target, splitterDir)
-                                visiting.remove(pos)
-                                decision[pos] = true
+                                plannedMoves[item.id] = PlannedAction.MoveToTile(target, LANE_NORMAL, splitterDir)
+                                visiting.remove(slot)
+                                decision[slot] = true
                                 return true
                             }
                         }
@@ -490,15 +585,70 @@ class FactorySimulation(
 
                     is TileEntity.Splitter -> {
                         val canEnter = pos == target + targetTile.inputDir
-                        if (canEnter && target !in reservedTileTargets) {
-                            val targetFree = (target !in occupantAt) || resolveMove(target)
+                        val targetSlot = OccupantSlot(target, LANE_NORMAL)
+                        if (canEnter && targetSlot !in reservedTileSlots) {
+                            val targetFree = (targetSlot !in occupantAt) || resolveMove(targetSlot)
                             if (targetFree) {
-                                reservedTileTargets.add(target)
+                                reservedTileSlots.add(targetSlot)
                                 val splitterDir = if (tile is TileEntity.Splitter) outDir else null
-                                plannedMoves[item.id] = PlannedAction.MoveToTile(target, splitterDir)
-                                visiting.remove(pos)
-                                decision[pos] = true
+                                plannedMoves[item.id] = PlannedAction.MoveToTile(target, LANE_NORMAL, splitterDir)
+                                visiting.remove(slot)
+                                decision[slot] = true
                                 return true
+                            }
+                        }
+                    }
+
+                    is TileEntity.Filter -> {
+                        val canEnter = pos == target + targetTile.inputDir
+                        val targetSlot = OccupantSlot(target, LANE_NORMAL)
+                        if (canEnter && targetSlot !in reservedTileSlots) {
+                            val targetFree = (targetSlot !in occupantAt) || resolveMove(targetSlot)
+                            if (targetFree) {
+                                reservedTileSlots.add(targetSlot)
+                                val splitterDir = if (tile is TileEntity.Splitter) outDir else null
+                                plannedMoves[item.id] = PlannedAction.MoveToTile(target, LANE_NORMAL, splitterDir)
+                                visiting.remove(slot)
+                                decision[slot] = true
+                                return true
+                            }
+                        }
+                    }
+
+                    is TileEntity.Overflow -> {
+                        val canEnter = pos == target + targetTile.inputDir
+                        val targetSlot = OccupantSlot(target, LANE_NORMAL)
+                        if (canEnter && targetSlot !in reservedTileSlots) {
+                            val targetFree = (targetSlot !in occupantAt) || resolveMove(targetSlot)
+                            if (targetFree) {
+                                reservedTileSlots.add(targetSlot)
+                                val splitterDir = if (tile is TileEntity.Splitter) outDir else null
+                                plannedMoves[item.id] = PlannedAction.MoveToTile(target, LANE_NORMAL, splitterDir)
+                                visiting.remove(slot)
+                                decision[slot] = true
+                                return true
+                            }
+                        }
+                    }
+
+                    is TileEntity.Bridge -> {
+                        val targetLane = when (outDir) {
+                            targetTile.horizDir -> LANE_BRIDGE_HORIZ
+                            targetTile.vertDir -> LANE_BRIDGE_VERT
+                            else -> -1
+                        }
+                        if (targetLane >= 0) {
+                            val targetSlot = OccupantSlot(target, targetLane)
+                            if (targetSlot !in reservedTileSlots) {
+                                val targetFree = (targetSlot !in occupantAt) || resolveMove(targetSlot)
+                                if (targetFree) {
+                                    reservedTileSlots.add(targetSlot)
+                                    val splitterDir = if (tile is TileEntity.Splitter) outDir else null
+                                    plannedMoves[item.id] = PlannedAction.MoveToTile(target, targetLane, splitterDir)
+                                    visiting.remove(slot)
+                                    decision[slot] = true
+                                    return true
+                                }
                             }
                         }
                     }
@@ -507,15 +657,14 @@ class FactorySimulation(
                 }
             }
 
-            visiting.remove(pos)
-            decision[pos] = false
+            visiting.remove(slot)
+            decision[slot] = false
             return false
         }
 
-        // Deterministic coordinate order for planning.
-        val sortedPositions = occupantAt.keys.sortedWith(compareBy({ it.y }, { it.x }))
-        for (pos in sortedPositions) {
-            resolveMove(pos)
+        val sortedSlots = occupantAt.keys.sortedWith(compareBy({ it.coord.y }, { it.coord.x }, { it.lane }))
+        for (slot in sortedSlots) {
+            resolveMove(slot)
         }
 
         // Pass 2: Apply all planned moves simultaneously.
@@ -529,6 +678,11 @@ class FactorySimulation(
                     if (currentTile is TileEntity.Splitter && action.splitterUsedDir != null) {
                         currentTile.toggleLeft = (action.splitterUsedDir != currentTile.outputLeft)
                     }
+                    if (action.targetLane == LANE_BRIDGE_VERT) {
+                        bridgeVerticalItems.add(item.id)
+                    } else {
+                        bridgeVerticalItems.remove(item.id)
+                    }
                     item.currentCoord = action.target
                 }
 
@@ -538,6 +692,15 @@ class FactorySimulation(
                         hatch.deliveredCount++
                         deliveryHistoryTicks.addLast(tickCount)
                     }
+                    bridgeVerticalItems.remove(item.id)
+                    recentConsumedItems.add(
+                        item.copy(prevCoord = item.currentCoord, currentCoord = action.target)
+                    )
+                    iterator.remove()
+                }
+
+                is PlannedAction.EnterIncinerator -> {
+                    bridgeVerticalItems.remove(item.id)
                     recentConsumedItems.add(
                         item.copy(prevCoord = item.currentCoord, currentCoord = action.target)
                     )
@@ -545,6 +708,7 @@ class FactorySimulation(
                 }
 
                 is PlannedAction.EnterMachine -> {
+                    bridgeVerticalItems.remove(item.id)
                     when (val machineTile = getTile(action.target)) {
                         is TileEntity.Smelter -> {
                             singleMachines[action.target] = SingleMachineState(
@@ -566,9 +730,9 @@ class FactorySimulation(
                             val state = assemblers.getOrPut(action.target) {
                                 AssemblerState(totalTicks = machineTile.processTicks.coerceAtLeast(1))
                             }
-                            if (action.slot == 0) state.slotAFilled = true else state.slotBFilled = true
+                            if (action.slot == 0) state.slotAItem = item.type else state.slotBItem = item.type
                             state.enteredThisTick = true
-                            if (state.slotAFilled && state.slotBFilled) {
+                            if (state.slotAItem != null && state.slotBItem != null) {
                                 state.isProcessing = true
                                 state.ticksDone = 0
                             }
@@ -584,9 +748,9 @@ class FactorySimulation(
         }
 
         // Pass 3: Advance machines & spawners, emitting onto unoccupied output tiles.
-        val occupiedAfterMoves = HashSet<GridCoord>(activeItems.size * 2)
+        val occupiedAfterMoves = HashSet<OccupantSlot>(activeItems.size * 2)
         for (item in activeItems) {
-            occupiedAfterMoves.add(item.currentCoord)
+            occupiedAfterMoves.add(slotForItem(item))
         }
 
         fun tryEmit(fromCoord: GridCoord, outDir: Direction, itemType: ItemType): Boolean {
@@ -596,27 +760,72 @@ class FactorySimulation(
             return when (targetTile) {
                 is TileEntity.Belt -> {
                     val canEnter = fromCoord != target + targetTile.outputDir
-                    if (canEnter && target !in occupiedAfterMoves) {
+                    val targetSlot = OccupantSlot(target, LANE_NORMAL)
+                    if (canEnter && targetSlot !in occupiedAfterMoves) {
                         activeItems.add(MovingItem(nextItemId++, itemType, fromCoord, target))
-                        occupiedAfterMoves.add(target)
+                        occupiedAfterMoves.add(targetSlot)
                         true
                     } else false
                 }
                 is TileEntity.Splitter -> {
                     val canEnter = fromCoord == target + targetTile.inputDir
-                    if (canEnter && target !in occupiedAfterMoves) {
+                    val targetSlot = OccupantSlot(target, LANE_NORMAL)
+                    if (canEnter && targetSlot !in occupiedAfterMoves) {
                         activeItems.add(MovingItem(nextItemId++, itemType, fromCoord, target))
-                        occupiedAfterMoves.add(target)
+                        occupiedAfterMoves.add(targetSlot)
                         true
                     } else false
                 }
+                is TileEntity.Filter -> {
+                    val canEnter = fromCoord == target + targetTile.inputDir
+                    val targetSlot = OccupantSlot(target, LANE_NORMAL)
+                    if (canEnter && targetSlot !in occupiedAfterMoves) {
+                        activeItems.add(MovingItem(nextItemId++, itemType, fromCoord, target))
+                        occupiedAfterMoves.add(targetSlot)
+                        true
+                    } else false
+                }
+                is TileEntity.Overflow -> {
+                    val canEnter = fromCoord == target + targetTile.inputDir
+                    val targetSlot = OccupantSlot(target, LANE_NORMAL)
+                    if (canEnter && targetSlot !in occupiedAfterMoves) {
+                        activeItems.add(MovingItem(nextItemId++, itemType, fromCoord, target))
+                        occupiedAfterMoves.add(targetSlot)
+                        true
+                    } else false
+                }
+                is TileEntity.Bridge -> {
+                    val targetLane = when (outDir) {
+                        targetTile.horizDir -> LANE_BRIDGE_HORIZ
+                        targetTile.vertDir -> LANE_BRIDGE_VERT
+                        else -> -1
+                    }
+                    if (targetLane >= 0) {
+                        val targetSlot = OccupantSlot(target, targetLane)
+                        if (targetSlot !in occupiedAfterMoves) {
+                            val newId = nextItemId++
+                            if (targetLane == LANE_BRIDGE_VERT) {
+                                bridgeVerticalItems.add(newId)
+                            }
+                            activeItems.add(MovingItem(newId, itemType, fromCoord, target))
+                            occupiedAfterMoves.add(targetSlot)
+                            true
+                        } else false
+                    } else false
+                }
                 is TileEntity.Hatch -> {
-                    if (itemType == targetTile.requiredItem) {
+                    if (itemType == targetTile.requiredItem &&
+                        targetTile.deliveredCount < targetTile.targetCount
+                    ) {
                         targetTile.deliveredCount++
                         deliveryHistoryTicks.addLast(tickCount)
                         recentConsumedItems.add(MovingItem(nextItemId++, itemType, fromCoord, target))
                         true
                     } else false
+                }
+                TileEntity.Incinerator -> {
+                    recentConsumedItems.add(MovingItem(nextItemId++, itemType, fromCoord, target))
+                    true
                 }
                 is TileEntity.Smelter -> {
                     if (fromCoord == target + targetTile.inputDir && canSmelterAccept(target, itemType)) {
@@ -643,14 +852,14 @@ class FactorySimulation(
                     } else false
                 }
                 is TileEntity.Assembler -> {
-                    val slot = canAssemblerAccept(target, fromCoord, targetTile, itemType)
-                    if (slot != null) {
+                    val machineSlot = canAssemblerAccept(target, fromCoord, targetTile, itemType)
+                    if (machineSlot != null) {
                         val state = assemblers.getOrPut(target) {
                             AssemblerState(totalTicks = targetTile.processTicks.coerceAtLeast(1))
                         }
-                        if (slot == 0) state.slotAFilled = true else state.slotBFilled = true
+                        if (machineSlot == 0) state.slotAItem = itemType else state.slotBItem = itemType
                         state.enteredThisTick = true
-                        if (state.slotAFilled && state.slotBFilled) {
+                        if (state.slotAItem != null && state.slotBItem != null) {
                             state.isProcessing = true
                             state.ticksDone = 0
                         }
@@ -697,10 +906,7 @@ class FactorySimulation(
                         if (state.outputItem == null && state.inputItem != null) {
                             state.ticksDone++
                             if (state.ticksDone >= state.totalTicks) {
-                                state.outputItem = when (state.inputItem) {
-                                    ItemType.IRON_INGOT -> ItemType.IRON_PLATE
-                                    else -> null
-                                }
+                                state.outputItem = state.inputItem?.let(::pressOutputFor)
                             }
                         }
                         val out = state.outputItem
@@ -718,10 +924,12 @@ class FactorySimulation(
                         if (state.outputItem == null && state.isProcessing) {
                             state.ticksDone++
                             if (state.ticksDone >= state.totalTicks) {
-                                state.slotAFilled = false
-                                state.slotBFilled = false
+                                val a = state.slotAItem
+                                val b = state.slotBItem
+                                state.slotAItem = null
+                                state.slotBItem = null
                                 state.isProcessing = false
-                                state.outputItem = ItemType.GEAR
+                                state.outputItem = if (a != null && b != null) assemblerOutputFor(a, b) else null
                             }
                         }
                         val out = state.outputItem
@@ -736,8 +944,14 @@ class FactorySimulation(
                             spawnerCooldowns[coord] = currentCooldown - 1
                         }
                         if ((spawnerCooldowns[coord] ?: 0) == 0) {
-                            if (tryEmit(coord, tile.outputDir, tile.itemType)) {
+                            val secondary = tile.secondaryItemType
+                            val useSecondary = secondary != null && (spawnerSecondaryTurn[coord] == true)
+                            val emitType = if (useSecondary) secondary!! else tile.itemType
+                            if (tryEmit(coord, tile.outputDir, emitType)) {
                                 spawnerCooldowns[coord] = tile.spawnIntervalTicks.coerceAtLeast(1)
+                                if (secondary != null) {
+                                    spawnerSecondaryTurn[coord] = !useSecondary
+                                }
                             }
                         }
                     }

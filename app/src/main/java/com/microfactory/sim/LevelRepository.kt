@@ -1,7 +1,7 @@
 package com.microfactory.sim
 
 object LevelRepository {
-    val levels: List<LevelConfig> = listOf(
+    private val coreLevels: List<LevelConfig> = listOf(
         LevelConfig(
             id = 1,
             name = "First Melt",
@@ -331,6 +331,9 @@ object LevelRepository {
             hint = "Split the left Iron Plate line so half supplies the Gear Assembler and half feeds the Plate hatch."
         )
     )
+
+    val levels: List<LevelConfig> =
+        coreLevels + LevelPack2.levels + LevelPack3.levels + LevelPack4.levels
 
     fun getLevel(id: Int): LevelConfig =
         levels.firstOrNull { it.id == id } ?: levels.first()

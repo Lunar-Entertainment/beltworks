@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -27,6 +29,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -55,6 +58,18 @@ import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
 
+private data class TierFilter(val label: String, val range: IntRange)
+
+private val TIER_FILTERS = listOf(
+    TierFilter("All (80)", 1..80),
+    TierFilter("1–8 Core", 1..8),
+    TierFilter("9–18 Bridge", 9..18),
+    TierFilter("19–30 Circuit", 19..30),
+    TierFilter("31–44 Filter", 31..44),
+    TierFilter("45–62 Motor", 45..62),
+    TierFilter("63–80 Apex", 63..80)
+)
+
 @Composable
 fun MainMenuScreen(
     levels: List<LevelConfig>,
@@ -65,6 +80,7 @@ fun MainMenuScreen(
     onToggleMusic: () -> Unit
 ) {
     var animPhase by remember { mutableFloatStateOf(0f) }
+    var selectedTierIdx by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
         var lastNanos = withFrameNanos { it }
@@ -79,6 +95,7 @@ fun MainMenuScreen(
     val totalStarsEarned = records.values.sumOf { it.bestStars }
     val maxPossibleStars = levels.size * 3
     val continueLevel = levels.firstOrNull { it.id == continueLevelId } ?: levels.first()
+    val filteredLevels = levels.filter { it.id in TIER_FILTERS[selectedTierIdx].range }
 
     Column(
         modifier = Modifier
@@ -87,14 +104,13 @@ fun MainMenuScreen(
             .safeDrawingPadding()
             .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
-        // Hero Banner with animated conveyor showcase
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(18.dp))
                 .background(FactoryColors.SurfaceElevated)
                 .border(1.dp, FactoryColors.GridOuterFrame, RoundedCornerShape(18.dp))
-                .padding(18.dp),
+                .padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
@@ -112,13 +128,12 @@ fun MainMenuScreen(
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = 0.8.sp
             )
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Animated showcase belt strip
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(46.dp)
             ) {
                 val trackH = size.height * 0.62f
                 val railH = trackH + 6f
@@ -137,7 +152,6 @@ fun MainMenuScreen(
                     cornerRadius = CornerRadius(8f)
                 )
 
-                // Scrolling chevrons
                 val chevronCount = 9
                 val spacing = size.width / chevronCount
                 val chevSize = trackH * 0.28f
@@ -155,12 +169,12 @@ fun MainMenuScreen(
                     )
                 }
 
-                // Flowing items along the showcase belt
                 val showcaseItems = listOf(
                     ItemType.IRON_ORE,
-                    ItemType.IRON_INGOT,
                     ItemType.IRON_PLATE,
-                    ItemType.GEAR
+                    ItemType.COPPER_WIRE,
+                    ItemType.CIRCUIT,
+                    ItemType.MOTOR
                 )
                 val itemSpacing = size.width / showcaseItems.size
                 showcaseItems.forEachIndexed { idx, itemType ->
@@ -171,7 +185,7 @@ fun MainMenuScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -182,7 +196,7 @@ fun MainMenuScreen(
                     onClick = { onPlayLevel(continueLevel.id) },
                     modifier = Modifier
                         .weight(1f)
-                        .height(46.dp),
+                        .height(44.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = FactoryColors.BeltChevron,
@@ -200,7 +214,7 @@ fun MainMenuScreen(
 
                 Box(
                     modifier = Modifier
-                        .height(46.dp)
+                        .height(44.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(if (isMusicEnabled) FactoryColors.SpawnerBody else FactoryColors.GridCell)
                         .border(
@@ -223,9 +237,8 @@ fun MainMenuScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-        // Section Header with total star tally
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -234,7 +247,7 @@ fun MainMenuScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "FACTORY CONTRACTS",
+                text = "FACTORY CONTRACTS (${levels.size})",
                 color = FactoryColors.TextSecondary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
@@ -251,7 +264,39 @@ fun MainMenuScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Scrollable Level Cards
+        // Tier jump filter bar
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            TIER_FILTERS.forEachIndexed { idx, tier ->
+                val selected = idx == selectedTierIdx
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (selected) FactoryColors.BeltChevron else FactoryColors.SurfaceElevated)
+                        .border(
+                            1.dp,
+                            if (selected) FactoryColors.BeltChevron else FactoryColors.GridCellBorder,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable { selectedTierIdx = idx }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = tier.label,
+                        color = if (selected) FactoryColors.Background else FactoryColors.TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
@@ -259,7 +304,7 @@ fun MainMenuScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(bottom = 8.dp)
         ) {
-            items(levels, key = { it.id }) { level ->
+            items(filteredLevels, key = { it.id }) { level ->
                 val record = records[level.id] ?: LevelRecord()
                 LevelCard(
                     level = level,
@@ -291,14 +336,14 @@ private fun LevelCard(
                 shape = RoundedCornerShape(14.dp)
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Box(
                     modifier = Modifier
@@ -317,7 +362,7 @@ private fun LevelCard(
                 Text(
                     text = level.name,
                     color = FactoryColors.TextPrimary,
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -328,13 +373,29 @@ private fun LevelCard(
                     fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
                 )
+                val badge = level.newMechanicBadge
+                if (badge != null) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(FactoryColors.AssemblerBody)
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            text = badge,
+                            color = FactoryColors.AssemblerLight,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(3.dp))
             Text(
                 text = level.subtitle,
                 color = FactoryColors.TextSecondary,
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -342,7 +403,7 @@ private fun LevelCard(
             Spacer(modifier = Modifier.height(6.dp))
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 for (hatch in hatches) {
@@ -374,19 +435,18 @@ private fun LevelCard(
                 Text(
                     text = if (record.bestBelts != null) "Best ${record.bestBelts}b (Par ${level.parBelts})" else "Par ${level.parBelts}b",
                     color = FactoryColors.TextMuted,
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontFamily = FontFamily.Monospace
                 )
             }
         }
 
-        Spacer(modifier = Modifier.width(10.dp))
+        Spacer(modifier = Modifier.width(8.dp))
 
-        // Earned stars indicator
         Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             for (s in 1..3) {
                 val earned = s <= record.bestStars
-                Canvas(modifier = Modifier.size(18.dp)) {
+                Canvas(modifier = Modifier.size(17.dp)) {
                     val cx = size.width / 2f
                     val cy = size.height / 2f
                     val outerR = size.minDimension * 0.46f
