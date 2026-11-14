@@ -1,1 +1,3 @@
-# Add project specific ProGuard rules here.
+# Preserve readable line numbers and source file names in Play Console crash reports
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
