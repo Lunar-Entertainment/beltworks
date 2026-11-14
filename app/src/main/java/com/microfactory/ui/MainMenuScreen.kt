@@ -76,8 +76,10 @@ fun MainMenuScreen(
     records: Map<Int, LevelRecord>,
     continueLevelId: Int,
     isMusicEnabled: Boolean,
+    currentTrackTitle: String,
     onPlayLevel: (Int) -> Unit,
-    onToggleMusic: () -> Unit
+    onToggleMusic: () -> Unit,
+    onNextTrack: () -> Unit
 ) {
     var animPhase by remember { mutableFloatStateOf(0f) }
     var selectedTierIdx by remember { mutableIntStateOf(0) }
@@ -233,6 +235,48 @@ fun MainMenuScreen(
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(FactoryColors.GridCell)
+                    .border(1.dp, FactoryColors.GridCellBorder, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = if (isMusicEnabled) "♪ Flow Mix: $currentTrackTitle" else "♪ Flow Soundtrack Paused",
+                    color = if (isMusicEnabled) FactoryColors.TextSecondary else FactoryColors.TextMuted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                if (isMusicEnabled) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(FactoryColors.SpawnerBody)
+                            .border(1.dp, FactoryColors.SpawnerAccent.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                            .clickable(onClick = onNextTrack)
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = "NEXT ▸",
+                            color = FactoryColors.SpawnerAccent,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
             }
         }

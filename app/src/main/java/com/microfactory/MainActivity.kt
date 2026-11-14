@@ -2,6 +2,8 @@ package com.microfactory
 
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -37,6 +39,7 @@ class MainActivity : ComponentActivity() {
                 val lifecycleOwner = LocalLifecycleOwner.current
 
                 var isMusicEnabled by remember { mutableStateOf(progressStore.isMusicEnabled()) }
+                var currentTrackTitle by remember { mutableStateOf(musicEngine.getCurrentTrackTitle()) }
                 var activeLevelId by remember { mutableStateOf<Int?>(null) }
                 var lastPlayedLevelId by remember { mutableIntStateOf(progressStore.getLastPlayedLevelId()) }
                 var records by remember {
@@ -47,6 +50,10 @@ class MainActivity : ComponentActivity() {
 
                 // Keep AudioTrack playback bound to foreground lifecycle.
                 DisposableEffect(lifecycleOwner) {
+                    val mainHandler = Handler(Looper.getMainLooper())
+                    musicEngine.onTrackChanged = { title ->
+                        mainHandler.post { currentTrackTitle = title }
+                    }
                     musicEngine.setMuted(!isMusicEnabled)
                     val observer = LifecycleEventObserver { _, event ->
                         when (event) {
@@ -60,6 +67,7 @@ class MainActivity : ComponentActivity() {
                         musicEngine.start()
                     }
                     onDispose {
+                        musicEngine.onTrackChanged = null
                         lifecycleOwner.lifecycle.removeObserver(observer)
                         musicEngine.stop()
                     }
@@ -79,18 +87,21 @@ class MainActivity : ComponentActivity() {
                         records = records,
                         continueLevelId = lastPlayedLevelId,
                         isMusicEnabled = isMusicEnabled,
+                        currentTrackTitle = currentTrackTitle,
                         onPlayLevel = { levelId ->
                             lastPlayedLevelId = levelId
                             progressStore.setLastPlayedLevelId(levelId)
                             activeLevelId = levelId
                         },
-                        onToggleMusic = toggleMusic
+                        onToggleMusic = toggleMusic,
+                        onNextTrack = { musicEngine.nextTrack() }
                     )
                 } else {
                     FactoryGameScreen(
                         initialLevelId = currentLevelId,
                         isMusicEnabled = isMusicEnabled,
                         onToggleMusic = toggleMusic,
+                        onNextTrack = { musicEngine.nextTrack() },
                         onBackToMenu = {
                             records = LevelRepository.levels.associate { it.id to progressStore.getRecord(it.id) }
                             activeLevelId = null

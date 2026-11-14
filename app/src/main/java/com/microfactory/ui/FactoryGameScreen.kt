@@ -44,6 +44,7 @@ fun FactoryGameScreen(
     initialLevelId: Int,
     isMusicEnabled: Boolean,
     onToggleMusic: () -> Unit,
+    onNextTrack: () -> Unit,
     onBackToMenu: () -> Unit,
     onTileEdited: () -> Unit,
     onLevelCompleted: (levelId: Int, stars: Int, beltsUsed: Int) -> Unit
@@ -143,6 +144,7 @@ fun FactoryGameScreen(
             isMusicEnabled = isMusicEnabled,
             onBackToMenu = onBackToMenu,
             onToggleMusic = onToggleMusic,
+            onNextTrack = onNextTrack,
             onPrevLevel = {
                 if (levelIndex > 0) levelIndex--
             },

@@ -17,7 +17,7 @@ A minimalist, one-handed, portrait-mode grid automation puzzle game built in **K
   - **Drag with Belt tool:** Automatically orients straight and 90° curved corner belts along your finger path.
   - **Tap existing belt/machine:** Smoothly connects and sweeps belt outputs around neighboring feeders/targets (creating curved corners automatically), and rotates machines 90° clockwise.
   - **Tap or drag with Bulldoze tool:** Clears player-placed tiles back to empty.
-- **Flow Soundtrack:** Zero-asset procedural `AudioTrack` synthesizer playing a D Dorian ambient pad, marimba-style arpeggio, soft pulse, and tactile placement/victory chimes.
+- **Flow Soundtrack:** Zero-asset multi-track procedural `AudioTrack` synthesizer featuring 5 cohesive ambient-flow songs (*Conveyor Drift*, *Copper Rain*, *Midnight Smelter*, *Clockwork Tide*, *Solar Circuit*) with detuned warm pads, polyphonic kalimba/bell plucks, sub-bass, damped echo delay, track skip controls, and tactile placement/victory chimes.
 
 ## Architecture
 

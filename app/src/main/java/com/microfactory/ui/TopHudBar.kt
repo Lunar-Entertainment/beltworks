@@ -44,6 +44,7 @@ fun TopHudBar(
     isMusicEnabled: Boolean,
     onBackToMenu: () -> Unit,
     onToggleMusic: () -> Unit,
+    onNextTrack: () -> Unit,
     onPrevLevel: () -> Unit,
     onNextLevel: () -> Unit,
     onSelectSpeed: (SimulationSpeed) -> Unit,
@@ -133,6 +134,26 @@ fun TopHudBar(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+
+                if (isMusicEnabled) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(FactoryColors.GridCell)
+                            .border(1.dp, FactoryColors.GridCellBorder, RoundedCornerShape(8.dp))
+                            .clickable(onClick = onNextTrack)
+                            .padding(horizontal = 6.dp, vertical = 5.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "››",
+                            color = FactoryColors.SpawnerAccent,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
 
                 // Rolling IPM badge
