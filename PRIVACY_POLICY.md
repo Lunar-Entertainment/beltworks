@@ -74,5 +74,5 @@ If future updates change how data or ads are handled, this Privacy Policy will b
 
 If you have questions about this Privacy Policy or Beltworks, please contact **Lunar Entertainment**:
 
-- GitHub Repository: https://github.com/Lunar-Entertainment/micro-factory-belt
-- Support / Issues: https://github.com/Lunar-Entertainment/micro-factory-belt/issues
+- GitHub Repository: https://github.com/Lunar-Entertainment/beltworks
+- Support / Issues: https://github.com/Lunar-Entertainment/beltworks/issues
