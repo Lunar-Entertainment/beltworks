@@ -122,11 +122,11 @@ fun MainMenuScreen(
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "MICRO-FACTORY BELT",
+                text = "BELTWORKS",
                 color = FactoryColors.TextPrimary,
-                fontSize = 23.sp,
+                fontSize = 26.sp,
                 fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 0.8.sp
+                letterSpacing = 1.4.sp
             )
             Spacer(modifier = Modifier.height(12.dp))
 

@@ -1,4 +1,4 @@
-# Micro-Factory Belt
+# Beltworks
 
 A minimalist, one-handed, portrait-mode grid automation puzzle game built in **Kotlin** with **Jetpack Compose (Material 3)**, a custom Compose `Canvas` renderer, and a procedural ambient flow soundtrack.
 

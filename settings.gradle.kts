@@ -19,5 +19,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "MicroFactoryBelt"
+rootProject.name = "Beltworks"
 include(":app")
