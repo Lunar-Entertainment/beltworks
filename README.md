@@ -35,3 +35,7 @@ A minimalist, one-handed, portrait-mode grid automation puzzle game built in **K
 ```bash
 ./gradlew testDebugUnitTest assembleDebug
 ```
+
+## Privacy Policy
+
+See [PRIVACY_POLICY.md](PRIVACY_POLICY.md).
