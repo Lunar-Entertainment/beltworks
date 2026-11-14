@@ -41,6 +41,9 @@ fun TopHudBar(
     hatches: List<TileEntity.Hatch>,
     rollingIpm: Double,
     speed: SimulationSpeed,
+    isMusicEnabled: Boolean,
+    onBackToMenu: () -> Unit,
+    onToggleMusic: () -> Unit,
     onPrevLevel: () -> Unit,
     onNextLevel: () -> Unit,
     onSelectSpeed: (SimulationSpeed) -> Unit,
@@ -52,10 +55,10 @@ fun TopHudBar(
             .fillMaxWidth()
             .background(FactoryColors.SurfaceElevated)
             .border(width = 1.dp, color = FactoryColors.GridCellBorder)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Row 1: Level title + switcher + IPM readout
+        // Row 1: Menu button + Level switcher + Music toggle + IPM readout
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -65,13 +68,30 @@ fun TopHudBar(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f)
             ) {
-                LevelNavButton(label = "<", enabled = hasPrevLevel, onClick = onPrevLevel)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(FactoryColors.GridCell)
+                        .border(1.dp, FactoryColors.GridCellBorder, RoundedCornerShape(6.dp))
+                        .clickable(onClick = onBackToMenu)
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Menu",
+                        color = FactoryColors.TextPrimary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 Spacer(modifier = Modifier.width(6.dp))
+                LevelNavButton(label = "<", enabled = hasPrevLevel, onClick = onPrevLevel)
+                Spacer(modifier = Modifier.width(5.dp))
                 Column(modifier = Modifier.weight(1f, fill = false)) {
                     Text(
                         text = "LVL ${level.id} · ${level.name}",
                         color = FactoryColors.TextPrimary,
-                        fontSize = 15.sp,
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -79,32 +99,58 @@ fun TopHudBar(
                     Text(
                         text = level.subtitle,
                         color = FactoryColors.TextSecondary,
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(5.dp))
                 LevelNavButton(label = ">", enabled = hasNextLevel, onClick = onNextLevel)
             }
 
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(6.dp))
 
-            // Rolling IPM badge
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(FactoryColors.GridCell)
-                    .border(1.dp, FactoryColors.GridCellBorder, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 9.dp, vertical = 5.dp)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = String.format(Locale.US, "%.1f IPM", rollingIpm),
-                    color = FactoryColors.BeltChevron,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    fontFamily = FontFamily.Monospace
-                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isMusicEnabled) FactoryColors.SpawnerBody else FactoryColors.GridCell)
+                        .border(
+                            1.dp,
+                            if (isMusicEnabled) FactoryColors.SpawnerAccent.copy(alpha = 0.7f) else FactoryColors.GridCellBorder,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable(onClick = onToggleMusic)
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isMusicEnabled) "♪" else "♪̸",
+                        color = if (isMusicEnabled) FactoryColors.SpawnerAccent else FactoryColors.TextMuted,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Rolling IPM badge
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(FactoryColors.GridCell)
+                        .border(1.dp, FactoryColors.GridCellBorder, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 8.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        text = String.format(Locale.US, "%.1f IPM", rollingIpm),
+                        color = FactoryColors.BeltChevron,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
             }
         }
 
@@ -114,9 +160,8 @@ fun TopHudBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Quotas
             Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 for (hatch in hatches) {
@@ -127,11 +172,11 @@ fun TopHudBar(
                             .clip(RoundedCornerShape(8.dp))
                             .background(if (done) FactoryColors.HatchDoneBody else FactoryColors.GridCell)
                             .border(1.dp, accent.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                            .padding(horizontal = 7.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Canvas(modifier = Modifier.size(16.dp)) {
+                        Canvas(modifier = Modifier.size(15.dp)) {
                             drawItemShape(
                                 type = hatch.requiredItem,
                                 center = Offset(size.width / 2f, size.height / 2f),
@@ -142,7 +187,7 @@ fun TopHudBar(
                         Text(
                             text = "${hatch.deliveredCount.coerceAtMost(hatch.targetCount)}/${hatch.targetCount}",
                             color = if (done) FactoryColors.HatchDoneAccent else FactoryColors.TextPrimary,
-                            fontSize = 12.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
@@ -150,7 +195,6 @@ fun TopHudBar(
                 }
             }
 
-            // Speed controls & Reset
             Row(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -193,7 +237,7 @@ fun TopHudBar(
                         .background(FactoryColors.GridCell)
                         .border(1.dp, FactoryColors.BulldozeAccent.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
                         .clickable { onResetBoard() }
-                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                        .padding(horizontal = 7.dp, vertical = 5.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -216,7 +260,7 @@ private fun LevelNavButton(
 ) {
     Box(
         modifier = Modifier
-            .size(26.dp)
+            .size(25.dp)
             .clip(RoundedCornerShape(6.dp))
             .background(FactoryColors.GridCell)
             .border(1.dp, FactoryColors.GridCellBorder, RoundedCornerShape(6.dp))

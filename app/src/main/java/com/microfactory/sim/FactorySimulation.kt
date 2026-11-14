@@ -15,16 +15,21 @@ data class MachineStatus(
  * Uses two-pass tick resolution so conveyor trains advance in lockstep without overlaps or teleportation.
  */
 class FactorySimulation(
-    val width: Int = 8,
-    val height: Int = 10
+    width: Int = 8,
+    height: Int = 10
 ) {
+    var width: Int = width
+        private set
+    var height: Int = height
+        private set
+
     companion object {
         const val BASE_TICKS_PER_SECOND = 4.0
         const val TICK_DURATION_NANOS = 250_000_000L
         private const val IPM_WINDOW_TICKS = 240L // 60 simulated seconds at 4 ticks/sec
     }
 
-    private val grid: Array<Array<TileEntity>> =
+    private var grid: Array<Array<TileEntity>> =
         Array(height) { Array(width) { TileEntity.Empty } }
 
     private val activeItems = mutableListOf<MovingItem>()
@@ -136,10 +141,113 @@ class FactorySimulation(
         if (!inBounds(coord)) return false
         val current = grid[coord.y][coord.x]
         if (!current.isPlayerEditable()) return false
-        grid[coord.y][coord.x] = current.rotatedClockwise()
+
+        val rotated = when (current) {
+            is TileEntity.Belt -> computeSmoothBeltRotation(coord, current)
+            else -> current.rotatedClockwise()
+        }
+        grid[coord.y][coord.x] = rotated
         singleMachines.remove(coord)
         assemblers.remove(coord)
+
+        val outDir = when (rotated) {
+            is TileEntity.Belt -> rotated.outputDir
+            is TileEntity.Smelter -> rotated.outputDir
+            is TileEntity.Press -> rotated.outputDir
+            is TileEntity.Assembler -> rotated.outputDir
+            else -> null
+        }
+        if (outDir != null) {
+            autoConnectDownstreamBelt(coord, outDir)
+        }
         return true
+    }
+
+    /**
+     * Smoothly snaps a downstream Belt's inputDir to receive from [fromCoord] if that belt's
+     * current input side is not already fed by another neighbor.
+     */
+    fun autoConnectDownstreamBelt(fromCoord: GridCoord, outDir: Direction) {
+        val nextCoord = fromCoord + outDir
+        if (!inBounds(nextCoord)) return
+        val nextTile = grid[nextCoord.y][nextCoord.x] as? TileEntity.Belt ?: return
+        val incomingSide = outDir.opposite()
+        if (nextTile.inputDir == incomingSide || nextTile.outputDir == incomingSide) return
+        if (!hasOutputToward(nextCoord + nextTile.inputDir, nextCoord)) {
+            grid[nextCoord.y][nextCoord.x] = nextTile.copy(inputDir = incomingSide)
+        }
+    }
+
+    private fun computeSmoothBeltRotation(coord: GridCoord, current: TileEntity.Belt): TileEntity.Belt {
+        val incomingFeeders = Direction.entries.filter { dir ->
+            hasOutputToward(coord + dir, coord)
+        }
+        val outgoingTargets = Direction.entries.filter { dir ->
+            canAcceptOutputFrom(coord + dir, coord)
+        }
+
+        if (incomingFeeders.isNotEmpty()) {
+            val candidates = buildList {
+                for (inDir in incomingFeeders) {
+                    add(TileEntity.Belt(inDir, inDir.rotateClockwise()))
+                    add(TileEntity.Belt(inDir, inDir.opposite()))
+                    add(TileEntity.Belt(inDir, inDir.rotateCounterClockwise()))
+                }
+            }
+            val idx = candidates.indexOf(current)
+            if (idx >= 0) {
+                return candidates[(idx + 1) % candidates.size]
+            }
+            val primaryIn = incomingFeeders.first()
+            val preferredOut = outgoingTargets.firstOrNull { it != primaryIn } ?: primaryIn.opposite()
+            return TileEntity.Belt(primaryIn, preferredOut)
+        }
+
+        if (outgoingTargets.isNotEmpty()) {
+            val candidates = buildList {
+                for (outDir in outgoingTargets) {
+                    add(TileEntity.Belt(outDir.rotateClockwise(), outDir))
+                    add(TileEntity.Belt(outDir.opposite(), outDir))
+                    add(TileEntity.Belt(outDir.rotateCounterClockwise(), outDir))
+                }
+            }
+            val idx = candidates.indexOf(current)
+            if (idx >= 0) {
+                return candidates[(idx + 1) % candidates.size]
+            }
+            val primaryOut = outgoingTargets.first()
+            return TileEntity.Belt(primaryOut.opposite(), primaryOut)
+        }
+
+        return current.rotatedClockwise() as TileEntity.Belt
+    }
+
+    private fun hasOutputToward(neighborCoord: GridCoord, targetCoord: GridCoord): Boolean {
+        if (!inBounds(neighborCoord)) return false
+        val expectedDir = neighborCoord.directionTo(targetCoord) ?: return false
+        return when (val t = grid[neighborCoord.y][neighborCoord.x]) {
+            is TileEntity.Spawner -> t.outputDir == expectedDir
+            is TileEntity.Belt -> t.outputDir == expectedDir
+            is TileEntity.Smelter -> t.outputDir == expectedDir
+            is TileEntity.Press -> t.outputDir == expectedDir
+            is TileEntity.Assembler -> t.outputDir == expectedDir
+            is TileEntity.Splitter -> t.outputLeft == expectedDir || t.outputRight == expectedDir
+            else -> false
+        }
+    }
+
+    private fun canAcceptOutputFrom(targetCoord: GridCoord, sourceCoord: GridCoord): Boolean {
+        if (!inBounds(targetCoord)) return false
+        val sideFromSource = targetCoord.directionTo(sourceCoord) ?: return false
+        return when (val t = grid[targetCoord.y][targetCoord.x]) {
+            is TileEntity.Hatch -> true
+            is TileEntity.Belt -> t.outputDir != sideFromSource
+            is TileEntity.Splitter -> t.inputDir == sideFromSource
+            is TileEntity.Smelter -> t.inputDir == sideFromSource
+            is TileEntity.Press -> t.inputDir == sideFromSource
+            is TileEntity.Assembler -> t.inputDirA == sideFromSource || t.inputDirB == sideFromSource
+            else -> false
+        }
     }
 
     fun clearTile(coord: GridCoord): Boolean {
@@ -151,8 +259,10 @@ class FactorySimulation(
     }
 
     fun loadLevel(level: LevelConfig) {
-        require(level.width == width && level.height == height) {
-            "Level dimensions (${level.width}x${level.height}) must match simulation (${width}x${height})"
+        if (level.width != width || level.height != height) {
+            width = level.width
+            height = level.height
+            grid = Array(height) { Array(width) { TileEntity.Empty } }
         }
         loadedLevel = level
         resetBoard()

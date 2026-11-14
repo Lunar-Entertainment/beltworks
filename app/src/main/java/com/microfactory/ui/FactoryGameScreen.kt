@@ -1,5 +1,6 @@
 package com.microfactory.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,13 +32,25 @@ import com.microfactory.sim.SimulationSpeed
 import com.microfactory.sim.TileEntity
 
 @Composable
-fun FactoryGameScreen() {
+fun FactoryGameScreen(
+    initialLevelId: Int,
+    isMusicEnabled: Boolean,
+    onToggleMusic: () -> Unit,
+    onBackToMenu: () -> Unit,
+    onTileEdited: () -> Unit,
+    onLevelCompleted: (levelId: Int, stars: Int, beltsUsed: Int) -> Unit
+) {
+    BackHandler(onBack = onBackToMenu)
+
     val levels = LevelRepository.levels
-    var levelIndex by remember { mutableIntStateOf(0) }
+    var levelIndex by remember(initialLevelId) {
+        val idx = levels.indexOfFirst { it.id == initialLevelId }.coerceAtLeast(0)
+        mutableIntStateOf(idx)
+    }
     val currentLevel = levels[levelIndex]
 
     val simulation = remember {
-        FactorySimulation().apply { loadLevel(levels[0]) }
+        FactorySimulation().apply { loadLevel(currentLevel) }
     }
     var selectedTool by remember { mutableStateOf(BuildTool.BELT) }
     var speed by remember { mutableStateOf(SimulationSpeed.X1) }
@@ -47,7 +60,7 @@ fun FactoryGameScreen() {
     var beltPhase by remember { mutableFloatStateOf(0f) }
     var renderVersion by remember { mutableIntStateOf(0) }
     var showVictory by remember { mutableStateOf(false) }
-    var victoryDismissedForRun by remember { mutableStateOf(false) }
+    var victoryRecordedForRun by remember { mutableStateOf(false) }
 
     // Load or reset level whenever levelIndex or resetNonce changes.
     LaunchedEffect(levelIndex, resetNonce) {
@@ -55,7 +68,7 @@ fun FactoryGameScreen() {
         tickAlpha = 0f
         beltPhase = 0f
         showVictory = false
-        victoryDismissedForRun = false
+        victoryRecordedForRun = false
         if (speed == SimulationSpeed.PAUSED) {
             speed = SimulationSpeed.X1
         }
@@ -88,14 +101,16 @@ fun FactoryGameScreen() {
                 beltPhase = ((simulation.tickCount % 1000L).toFloat() + tickAlpha) % 1f
                 renderVersion++
 
-                if (simulation.isComplete && !victoryDismissedForRun) {
+                if (simulation.isComplete && !victoryRecordedForRun) {
+                    victoryRecordedForRun = true
                     showVictory = true
+                    val belts = simulation.beltCount
+                    onLevelCompleted(currentLevel.id, currentLevel.calculateStars(belts), belts)
                 }
             }
         }
     }
 
-    // Read renderVersion to keep HUD counters reactive on every tick/edit.
     @Suppress("UNUSED_EXPRESSION")
     renderVersion
     val hatches: List<TileEntity.Hatch> = simulation.getHatches().mapNotNull { it.tile as? TileEntity.Hatch }
@@ -113,6 +128,9 @@ fun FactoryGameScreen() {
             hatches = hatches,
             rollingIpm = simulation.rollingIpm,
             speed = speed,
+            isMusicEnabled = isMusicEnabled,
+            onBackToMenu = onBackToMenu,
+            onToggleMusic = onToggleMusic,
             onPrevLevel = {
                 if (levelIndex > 0) levelIndex--
             },
@@ -123,7 +141,6 @@ fun FactoryGameScreen() {
             onResetBoard = { resetNonce++ }
         )
 
-        // Subtle level objective hint strip
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -140,7 +157,6 @@ fun FactoryGameScreen() {
             )
         }
 
-        // Center Grid Canvas
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -154,11 +170,13 @@ fun FactoryGameScreen() {
                 tickAlpha = tickAlpha,
                 beltPhase = beltPhase,
                 renderVersion = renderVersion,
-                onBoardChanged = { renderVersion++ }
+                onBoardChanged = {
+                    renderVersion++
+                    onTileEdited()
+                }
             )
         }
 
-        // Bottom Thumb-Accessible Machine Palette
         MachinePalette(
             selectedTool = selectedTool,
             onSelectTool = { selectedTool = it }
@@ -186,7 +204,6 @@ fun FactoryGameScreen() {
             },
             onDismiss = {
                 showVictory = false
-                victoryDismissedForRun = true
             }
         )
     }

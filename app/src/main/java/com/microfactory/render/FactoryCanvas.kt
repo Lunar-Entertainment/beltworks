@@ -163,6 +163,16 @@ fun FactoryCanvas(
                             val placed = createDefaultTileForTool(simulation, startCell, currentTool)
                             if (placed != null) {
                                 simulation.setTile(startCell, placed)
+                                val outDir = when (placed) {
+                                    is TileEntity.Belt -> placed.outputDir
+                                    is TileEntity.Smelter -> placed.outputDir
+                                    is TileEntity.Press -> placed.outputDir
+                                    is TileEntity.Assembler -> placed.outputDir
+                                    else -> null
+                                }
+                                if (outDir != null) {
+                                    simulation.autoConnectDownstreamBelt(startCell, outDir)
+                                }
                                 currentOnBoardChanged()
                             }
                         }
@@ -299,6 +309,7 @@ private fun handleBeltDragStep(
         val newBelt = TileEntity.Belt(inputDir = moveDir.opposite(), outputDir = moveDir)
         if (toTile != newBelt) {
             sim.setTile(toCell, newBelt)
+            sim.autoConnectDownstreamBelt(toCell, moveDir)
             changed = true
         }
     }
@@ -454,12 +465,12 @@ private fun DrawScope.drawBeltTile(
         drawPath(
             path = path,
             color = FactoryColors.BeltRail,
-            style = Stroke(width = railWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            style = Stroke(width = railWidth, cap = StrokeCap.Butt, join = StrokeJoin.Round)
         )
         drawPath(
             path = path,
             color = FactoryColors.BeltTrack,
-            style = Stroke(width = trackWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
+            style = Stroke(width = trackWidth, cap = StrokeCap.Butt, join = StrokeJoin.Round)
         )
         for (i in 0 until 3) {
             val t = (i / 3f + beltPhase) % 1f
