@@ -4,8 +4,8 @@ A minimalist, one-handed, portrait-mode grid automation puzzle game built in **K
 
 ## Gameplay & Features
 
-- **Main Menu & Contract Select:** Animated conveyor showcase, quick-continue button, tier jump filters (`All (80)`, `1–8 Core`, `9–18 Bridge`, `19–30 Circuit`, `31–44 Filter`, `45–62 Motor`, `63–80 Apex`), `NEW` mechanic badges, star ratings & best belt records saved per level, and soundtrack toggle.
-- **80 Progressive Levels:** Ranges from 8×10 starter smelters (Levels 1–8) to 10×13 dual-line megafactories (up to Level 80), introducing new logistics and crafting mechanics after Level 8:
+- **Main Menu & Contract Select:** Animated conveyor showcase, quick-continue button, **Standard (80)** & **Expert · No Help (60)** mode switcher, tier jump filters (`All (80)`, `1–8 Core`, `9–18 Bridge`, `19–30 Circuit`, `31–44 Filter`, `45–62 Motor`, `63–80 Apex`, plus `81–95 Blind`, `96–110 Matrix`, `111–125 Vortex`, `126–140 Omega`), `NEW` mechanic badges, star ratings & best belt records saved per level, and soundtrack toggle.
+- **140 Progressive Levels (80 Standard + 60 Expert):** Ranges from 8×10 starter smelters (Levels 1–8) to 10×13 dual-line megafactories (Levels 1–80), plus **60 Expert Mode levels (81–140)** with mixed feeds, tight rock choke points, multi-bay quotas, and **no hints or Help**:
   - **Level 9 — Copper Wire:** `Press` stamps `COPPER_INGOT` into `COPPER_WIRE`.
   - **Level 10 — Bridge:** Dual-lane 1-tile overpass crossing horizontal and vertical streams without mixing.
   - **Level 19 — Circuit:** `Assembler` combines `IRON_PLATE` + `COPPER_WIRE` into `CIRCUIT`.
@@ -24,7 +24,7 @@ A minimalist, one-handed, portrait-mode grid automation puzzle game built in **K
 - `com.microfactory.sim` — 100% pure Kotlin simulation engine (zero Android framework imports):
   - `Direction`, `GridCoord`, `ItemType`, `MovingItem`, `SimulationSpeed`, `TileEntity`
   - `FactorySimulation` with fixed 4 ticks/sec base rate, two-pass back-to-front reservation tick resolution, dual-lane `Bridge` slots, neighbor-aware smooth belt rotation, and rolling IPM tracking
-  - `LevelConfig`, `LevelRepository`, `LevelPack2`, `LevelPack3`, `LevelPack4` (80 levels across 8×10 through 10×13 grids)
+  - `LevelConfig`, `LevelRepository`, `LevelPack2`, `LevelPack3`, `LevelPack4`, `LevelPackExpert1`, `LevelPackExpert2` (140 levels: 80 Standard + 60 Expert across 8×10 through 10×13 grids)
 - `com.microfactory.render` — Custom Compose `Canvas` renderer with 60/120 FPS `withFrameNanos` linear interpolation, seamless straight/curved belts with animated chevrons, and `pointerInput` gesture handling.
 - `com.microfactory.audio` — `FlowMusicEngine` procedural `AudioTrack` synthesizer.
 - `com.microfactory.data` — `ProgressStore` (`SharedPreferences`) for stars, best belt counts, and audio preference.
