@@ -127,10 +127,26 @@ class MainActivity : ComponentActivity() {
                     }
 
                     isSettingsOpen -> {
+                        val allLevelIds = LevelRepository.levels.map { it.id }
                         SettingsScreen(
                             isHelpAdsEnabled = isHelpAdsEnabled,
                             isMusicEnabled = isMusicEnabled,
                             currentTrackTitle = currentTrackTitle,
+                            completedCount = completedIds.size,
+                            totalStarsEarned = records.values.sumOf { it.bestStars },
+                            onExportSaveCode = { progressStore.exportSaveCode(allLevelIds) },
+                            onExportSaveJson = { progressStore.exportSaveJson(allLevelIds) },
+                            onImportSaveData = { raw ->
+                                progressStore.importSaveData(raw).also { res ->
+                                    if (res.isSuccess) {
+                                        records = LevelRepository.levels.associate { it.id to progressStore.getRecord(it.id) }
+                                        lastPlayedLevelId = progressStore.getLastPlayedLevelId()
+                                        isMusicEnabled = progressStore.isMusicEnabled()
+                                        isHelpAdsEnabled = progressStore.isHelpAdsEnabled()
+                                        musicEngine.setMuted(!isMusicEnabled)
+                                    }
+                                }
+                            },
                             onToggleHelpAds = toggleHelpAds,
                             onToggleMusic = toggleMusic,
                             onNextTrack = { musicEngine.nextTrack() },
