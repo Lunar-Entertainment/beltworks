@@ -17,7 +17,9 @@ data class LevelConfig(
     val rocks: List<GridCoord>,
     val hint: String,
     val newMechanicBadge: String? = null,
-    val isExpert: Boolean = false
+    val isExpert: Boolean = false,
+    val requiresPower: Boolean = false,
+    val powerTerrain: List<PowerTerrainTile> = emptyList()
 ) {
     fun calculateStars(beltsUsed: Int): Int = when {
         beltsUsed <= parBelts -> 3
@@ -25,3 +27,5 @@ data class LevelConfig(
         else -> 1
     }
 }
+
+typealias LevelDefinition = LevelConfig

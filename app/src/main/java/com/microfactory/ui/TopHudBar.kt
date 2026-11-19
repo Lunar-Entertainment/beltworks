@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.microfactory.render.FactoryColors
 import com.microfactory.render.drawItemShape
+import com.microfactory.sim.GridLayer
 import com.microfactory.sim.LevelConfig
 import com.microfactory.sim.SimulationSpeed
 import com.microfactory.sim.TileEntity
@@ -42,6 +43,13 @@ fun TopHudBar(
     rollingIpm: Double,
     speed: SimulationSpeed,
     isMusicEnabled: Boolean,
+    activeLayer: GridLayer = GridLayer.FACTORY,
+    generatedPower: Float = 0f,
+    powerDemand: Float = 0f,
+    capacitorStored: Float = 0f,
+    capacitorCapacity: Float = 0f,
+    powerSatisfaction: Float = 1f,
+    onSelectLayer: (GridLayer) -> Unit = {},
     onBackToMenu: () -> Unit,
     onToggleMusic: () -> Unit,
     onNextTrack: () -> Unit,
@@ -239,7 +247,7 @@ fun TopHudBar(
                             )
                             .clickable { onSelectSpeed(option) }
                             .padding(horizontal = 7.dp, vertical = 5.dp),
-                        contentAlignment = Alignment.Center
+                            contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = if (option == SimulationSpeed.PAUSED) "II" else option.label,
@@ -267,6 +275,106 @@ fun TopHudBar(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+            }
+        }
+
+        // Row 3 (Power Levels only): Segmented [Factory] / [⚡ Power] layer toggle + live network wattage & capacitor readout
+        if (level.requiresPower) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(FactoryColors.Background)
+                        .border(1.dp, FactoryColors.GridCellBorder, RoundedCornerShape(8.dp))
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    val factorySelected = activeLayer == GridLayer.FACTORY
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (factorySelected) FactoryColors.BeltChevron else Color.Transparent)
+                            .clickable { onSelectLayer(GridLayer.FACTORY) }
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Factory",
+                            color = if (factorySelected) FactoryColors.Background else FactoryColors.TextSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+
+                    val powerSelected = activeLayer == GridLayer.POWER
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (powerSelected) FactoryColors.CableCore else Color.Transparent)
+                            .clickable { onSelectLayer(GridLayer.POWER) }
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "⚡ Power",
+                            color = if (powerSelected) FactoryColors.Background else FactoryColors.CableCore,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val wattAccent = when {
+                        powerDemand <= 0f && generatedPower <= 0f -> FactoryColors.TextSecondary
+                        powerSatisfaction >= 0.99f -> FactoryColors.HatchDoneAccent
+                        powerSatisfaction > 0.01f -> FactoryColors.HatchAccent
+                        else -> FactoryColors.IncineratorAccent
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(FactoryColors.GridCell)
+                            .border(1.dp, wattAccent.copy(alpha = 0.65f), RoundedCornerShape(7.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = String.format(Locale.US, "⚡ %.1f / %.1fW", generatedPower, powerDemand),
+                            color = wattAccent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(7.dp))
+                            .background(FactoryColors.CapacitorBody)
+                            .border(1.dp, FactoryColors.CapacitorAccent.copy(alpha = 0.65f), RoundedCornerShape(7.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = String.format(
+                                Locale.US,
+                                "CAP %.0f/%.0f⚡",
+                                capacitorStored,
+                                capacitorCapacity
+                            ),
+                            color = FactoryColors.CapacitorCharge,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
             }
         }

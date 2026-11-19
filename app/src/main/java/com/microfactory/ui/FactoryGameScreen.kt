@@ -8,12 +8,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,6 +35,7 @@ import com.microfactory.render.FactoryCanvas
 import com.microfactory.render.FactoryColors
 import com.microfactory.sim.FactorySimulation
 import com.microfactory.sim.GridCoord
+import com.microfactory.sim.GridLayer
 import com.microfactory.sim.ItemType
 import com.microfactory.sim.LevelHelpAdvisor
 import com.microfactory.sim.LevelRepository
@@ -58,7 +57,7 @@ fun FactoryGameScreen(
 ) {
     BackHandler(onBack = onBackToMenu)
 
-    val levels = LevelRepository.levels
+    val levels = LevelRepository.allLevels
     var levelIndex by remember(initialLevelId) {
         val idx = levels.indexOfFirst { it.id == initialLevelId }.coerceAtLeast(0)
         mutableIntStateOf(idx)
@@ -68,9 +67,11 @@ fun FactoryGameScreen(
     val simulation = remember {
         FactorySimulation().apply { loadLevel(currentLevel) }
     }
+    var activeLayer by remember { mutableStateOf(GridLayer.FACTORY) }
     var selectedTool by remember { mutableStateOf(BuildTool.BELT) }
     var selectedFilterItem by remember { mutableStateOf(ItemType.IRON_ORE) }
     var activeFilterCoord by remember { mutableStateOf<GridCoord?>(null) }
+    var activeMachineCoord by remember { mutableStateOf<GridCoord?>(null) }
     var speed by remember { mutableStateOf(SimulationSpeed.X1) }
     var resetNonce by remember { mutableIntStateOf(0) }
 
@@ -89,10 +90,12 @@ fun FactoryGameScreen(
 
     LaunchedEffect(levelIndex, resetNonce) {
         simulation.loadLevel(currentLevel)
-        if (currentLevel.id < selectedTool.unlockedFromLevel) {
+        activeLayer = GridLayer.FACTORY
+        if (!selectedTool.isVisibleFor(GridLayer.FACTORY, currentLevel.id, currentLevel.requiresPower)) {
             selectedTool = BuildTool.BELT
         }
         activeFilterCoord = null
+        activeMachineCoord = null
         tickAlpha = 0f
         beltPhase = 0f
         showVictory = false
@@ -143,6 +146,9 @@ fun FactoryGameScreen(
     @Suppress("UNUSED_EXPRESSION")
     renderVersion
     val hatches: List<TileEntity.Hatch> = simulation.getHatches().mapNotNull { it.tile as? TileEntity.Hatch }
+    val activeMachineTile: TileEntity? = activeMachineCoord?.let { coord ->
+        simulation.getTile(coord).takeIf { it.isPowerConsumer() }
+    }
 
     Column(
         modifier = Modifier
@@ -150,14 +156,31 @@ fun FactoryGameScreen(
             .background(FactoryColors.Background)
             .safeDrawingPadding()
     ) {
+        val nextIdInMode = LevelRepository.nextLevelIdInMode(currentLevel)
         TopHudBar(
             level = currentLevel,
             hasPrevLevel = levelIndex > 0,
-            hasNextLevel = levelIndex < levels.lastIndex && levels[levelIndex + 1].id <= highestUnlockedLevelId,
+            hasNextLevel = nextIdInMode != null && nextIdInMode <= highestUnlockedLevelId,
             hatches = hatches,
             rollingIpm = simulation.rollingIpm,
             speed = speed,
             isMusicEnabled = isMusicEnabled,
+            activeLayer = activeLayer,
+            generatedPower = simulation.totalGeneratedPower,
+            powerDemand = simulation.totalPowerDemand,
+            capacitorStored = simulation.totalCapacitorStored,
+            capacitorCapacity = simulation.totalCapacitorCapacity,
+            powerSatisfaction = simulation.overallPowerSatisfaction,
+            onSelectLayer = { targetLayer ->
+                activeLayer = targetLayer
+                if (!selectedTool.isVisibleFor(targetLayer, currentLevel.id, currentLevel.requiresPower)) {
+                    selectedTool = if (targetLayer == GridLayer.POWER) {
+                        BuildTool.POWER_CABLE
+                    } else {
+                        BuildTool.BELT
+                    }
+                }
+            },
             onBackToMenu = onBackToMenu,
             onToggleMusic = onToggleMusic,
             onNextTrack = onNextTrack,
@@ -165,9 +188,8 @@ fun FactoryGameScreen(
                 if (levelIndex > 0) levelIndex--
             },
             onNextLevel = {
-                val nextId = LevelRepository.nextLevelIdInMode(currentLevel)
-                if (nextId != null && nextId <= highestUnlockedLevelId) {
-                    val idx = levels.indexOfFirst { it.id == nextId }
+                if (nextIdInMode != null && nextIdInMode <= highestUnlockedLevelId) {
+                    val idx = levels.indexOfFirst { it.id == nextIdInMode }
                     if (idx >= 0) levelIndex = idx
                 }
             },
@@ -294,9 +316,11 @@ fun FactoryGameScreen(
         ) {
             FactoryCanvas(
                 simulation = simulation,
+                activeLayer = activeLayer,
                 selectedTool = selectedTool,
                 selectedFilterItem = selectedFilterItem,
                 activeFilterCoord = activeFilterCoord,
+                activeMachineCoord = activeMachineCoord,
                 helpRouteCoords = if (isHelpUnlocked) helpBlueprint.suggestedPathCoords else emptySet(),
                 tickAlpha = tickAlpha,
                 beltPhase = beltPhase,
@@ -310,15 +334,21 @@ fun FactoryGameScreen(
                     if (item != null) {
                         selectedFilterItem = item
                     }
+                },
+                onMachineSelected = { coord ->
+                    activeMachineCoord = coord
                 }
             )
         }
 
         MachinePalette(
             levelId = currentLevel.id,
+            activeLayer = activeLayer,
+            requiresPower = currentLevel.requiresPower,
             selectedTool = selectedTool,
             selectedFilterItem = selectedFilterItem,
             showFilterBar = selectedTool == BuildTool.FILTER || activeFilterCoord != null,
+            activeMachineTile = activeMachineTile,
             onSelectTool = { tool ->
                 selectedTool = tool
                 if (tool != BuildTool.FILTER) {
@@ -329,6 +359,13 @@ fun FactoryGameScreen(
                 selectedFilterItem = item
                 val coord = activeFilterCoord
                 if (coord != null && simulation.setFilterItem(coord, item)) {
+                    renderVersion++
+                    onTileEdited()
+                }
+            },
+            onToggleOverclock = {
+                val coord = activeMachineCoord
+                if (coord != null && simulation.toggleOverclock(coord)) {
                     renderVersion++
                     onTileEdited()
                 }

@@ -45,6 +45,10 @@ object LevelHelpAdvisor {
         if (level.id >= 45) {
             tips.add("Priority Flow: Overflow sends items straight until backed up, then spills sideways — great before secondary hatches or Trash.")
         }
+        if (level.requiresPower) {
+            steps.add("Power Layer (⚡): Switch to [⚡ Power] in the top bar, build Wind Turbines (2× on Wind Spots) or Hydro Generators (on Water Currents), and route Power Cables under your machines.")
+            tips.add("Capacitor & Overclock: Cable runs longer than 8 tiles lose 10% efficiency per 4 extra tiles unless buffered by a Capacitor Bank (40⚡ storage). Tap any powered machine to toggle 2.0× Overclock speed (2.5× ⚡ cost).")
+        }
         tips.add("Controls: Drag to lay curved belts, tap any belt to smoothly curve-connect it to neighbors, and tap machines to rotate.")
         tips.add("Target Par: Solve using ${level.parBelts} belts or fewer for 3 stars.")
 

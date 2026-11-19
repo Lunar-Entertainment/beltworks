@@ -661,7 +661,7 @@ class FactorySimulationTest {
 
     @Test
     fun helpAdvisorProducesValidStepsAndOpenPathBlueprints() {
-        for (levelId in listOf(1, 10, 31, 48, 80)) {
+        for (levelId in listOf(1, 10, 31, 48, 80, 141, 145)) {
             val level = LevelRepository.getLevel(levelId)
             val blueprint = LevelHelpAdvisor.buildBlueprint(level)
             assertTrue("Level $levelId should produce crafting steps", blueprint.craftingSteps.isNotEmpty())
@@ -672,4 +672,248 @@ class FactorySimulationTest {
             }
         }
     }
+
+    @Test
+    fun dualLayerCoordinatesAndConnectedVsIsolatedSubGrids() {
+        val sim = FactorySimulation(width = 8, height = 10, requiresPower = true)
+        assertEquals(12, sim.powerWidth)
+        assertEquals(14, sim.powerHeight)
+        assertEquals(GridCoord(2, 2), sim.factoryToPower(GridCoord(0, 0)))
+        assertEquals(GridCoord(9, 11), sim.factoryToPower(GridCoord(7, 9)))
+        assertEquals(GridCoord(0, 0), sim.powerToFactory(GridCoord(2, 2)))
+        assertEquals(null, sim.powerToFactory(GridCoord(0, 5)))
+        assertTrue(sim.isOuterPerimeter(GridCoord(0, 5)))
+        assertFalse(sim.isOuterPerimeter(GridCoord(4, 4)))
+
+        // Place Iron Ore -> Smelter -> Hatch on Layer 0
+        sim.setTile(GridCoord(1, 2), TileEntity.Spawner(ItemType.IRON_ORE, Direction.EAST, spawnIntervalTicks = 5))
+        sim.setTile(GridCoord(2, 2), TileEntity.Belt(Direction.WEST, Direction.EAST))
+        sim.setTile(GridCoord(3, 2), TileEntity.Smelter(Direction.WEST, Direction.EAST, processTicks = 2))
+        sim.setTile(GridCoord(4, 2), TileEntity.Hatch(ItemType.IRON_INGOT, targetCount = 1))
+
+        // Smelter at factory (3,2) maps to power (5,4).
+        // Sub-grid A: WindTurbine on WIND_SPOT (+6⚡) at (1,4) -> cables at (2,4), (3,4)
+        sim.setPowerTerrain(GridCoord(1, 4), PowerTerrainType.WIND_SPOT)
+        assertTrue(sim.setPowerTile(GridCoord(1, 4), PowerTile.WindTurbine))
+        assertTrue(sim.setPowerTile(GridCoord(2, 4), PowerTile.PowerCable()))
+        assertTrue(sim.setPowerTile(GridCoord(3, 4), PowerTile.PowerCable()))
+
+        // Sub-grid B (isolated from A): Cable under Smelter at (5,4)
+        assertTrue(sim.setPowerTile(GridCoord(5, 4), PowerTile.PowerCable()))
+
+        // Verify 4-way cable neighbor bitmasks on (2,4) connected WEST to (1,4) and EAST to (3,4)
+        val cable24 = sim.getPowerTile(GridCoord(2, 4)) as PowerTile.PowerCable
+        assertTrue(cable24.isConnected(Direction.WEST))
+        assertTrue(cable24.isConnected(Direction.EAST))
+        assertFalse(cable24.isConnected(Direction.NORTH))
+
+        // Isolated Smelter on Sub-grid B receives 0 satisfaction and cannot finish smelting
+        assertEquals(0f, sim.getMachinePowerSatisfaction(GridCoord(3, 2)), 0.001f)
+        assertEquals(MachinePowerState.UNPOWERED, sim.getMachinePowerState(GridCoord(3, 2)))
+
+        repeat(4) { sim.tick() }
+        val unpoweredHatch = sim.getTile(GridCoord(4, 2)) as TileEntity.Hatch
+        assertEquals(0, unpoweredHatch.deliveredCount)
+
+        // Bridge the gap at (4,4) to connect Sub-grid A and Sub-grid B
+        assertTrue(sim.setPowerTile(GridCoord(4, 4), PowerTile.PowerCable()))
+        assertEquals(1.0f, sim.getMachinePowerSatisfaction(GridCoord(3, 2)), 0.001f)
+        assertEquals(MachinePowerState.POWERED, sim.getMachinePowerState(GridCoord(3, 2)))
+
+        repeat(4) { sim.tick() }
+        assertEquals(1, unpoweredHatch.deliveredCount)
+        assertTrue(sim.isComplete)
+    }
+
+    @Test
+    fun windAndWaterTerrainMultipliersAndPlacementConstraints() {
+        val sim = FactorySimulation(width = 8, height = 10, requiresPower = true)
+        val normalSpot = GridCoord(0, 2)
+        val windSpot = GridCoord(0, 4)
+        val riverSpot = GridCoord(0, 6)
+        val rockSpot = GridCoord(0, 8)
+
+        sim.setPowerTerrain(windSpot, PowerTerrainType.WIND_SPOT)
+        sim.setPowerTerrain(riverSpot, PowerTerrainType.WATER_CURRENT, Direction.SOUTH)
+        sim.setPowerTerrain(rockSpot, PowerTerrainType.ROCK)
+
+        // WindTurbine: +3⚡ on normal, +6⚡ on WIND_SPOT (2.0x)
+        assertTrue(sim.setPowerTile(normalSpot, PowerTile.WindTurbine))
+        assertTrue(sim.setPowerTile(windSpot, PowerTile.WindTurbine))
+        assertEquals(3.0f, sim.getGeneratorOutput(normalSpot), 0.001f)
+        assertEquals(6.0f, sim.getGeneratorOutput(windSpot), 0.001f)
+
+        // HydroGenerator: rejected on normal and WIND_SPOT, accepted on WATER_CURRENT (+8⚡)
+        assertFalse(sim.setPowerTile(GridCoord(1, 2), PowerTile.HydroGenerator()))
+        assertFalse(sim.setPowerTile(windSpot, PowerTile.HydroGenerator()))
+        assertTrue(sim.setPowerTile(riverSpot, PowerTile.HydroGenerator()))
+        assertEquals(8.0f, sim.getGeneratorOutput(riverSpot), 0.001f)
+
+        // ROCK blocks cables, turbines, and capacitor banks
+        assertFalse(sim.setPowerTile(rockSpot, PowerTile.PowerCable()))
+        assertFalse(sim.setPowerTile(rockSpot, PowerTile.WindTurbine))
+        assertFalse(sim.setPowerTile(rockSpot, PowerTile.CapacitorBank))
+    }
+
+    @Test
+    fun transmissionDistanceDropOffAndCapacitorBankReset() {
+        val sim = FactorySimulation(width = 10, height = 10, requiresPower = true)
+        // Place WindTurbine on WIND_SPOT at (0, 2) -> +6.0⚡ raw output
+        sim.setPowerTerrain(GridCoord(0, 2), PowerTerrainType.WIND_SPOT)
+        assertTrue(sim.setPowerTile(GridCoord(0, 2), PowerTile.WindTurbine))
+
+        // Lay a 12-tile horizontal cable run from (1, 2) to (12, 2)
+        for (px in 1..12) {
+            assertTrue(sim.setPowerTile(GridCoord(px, 2), PowerTile.PowerCable()))
+        }
+
+        // Distance <= 8 has 100% efficiency; distance 12 (4 extra tiles) loses 10% -> 90% efficiency
+        assertEquals(1.0f, sim.getTransmissionEfficiency(GridCoord(8, 2)), 0.001f)
+        assertEquals(0.90f, sim.getTransmissionEfficiency(GridCoord(12, 2)), 0.001f)
+
+        // Place an Assembler (6.0⚡ demand) at factory (10 - 2 = 8, 2 - 2 = 0) -> power (10, 2)
+        // Wait: let's place it at factory (9, 0) -> power (11, 2) or蛇 snake the cable so distance to (10, 2) is 12!
+        // At (12, 2), effective generated power on the 12-step cable line without machine is 6.0 * 0.90 = 5.4⚡
+        val statsBefore = sim.getPowerNetworkStatsForPowerCoord(GridCoord(12, 2))!!
+        assertEquals(0.90f, statsBefore.transmissionEfficiency, 0.001f)
+        assertEquals(5.4f, statsBefore.effectiveGenerated, 0.001f)
+
+        // Place a CapacitorBank at (6, 2) to buffer the line and reset transmission distance penalty
+        assertTrue(sim.setPowerTile(GridCoord(6, 2), PowerTile.CapacitorBank))
+        assertEquals(1.0f, sim.getTransmissionEfficiency(GridCoord(12, 2)), 0.001f)
+        val statsAfter = sim.getPowerNetworkStatsForPowerCoord(GridCoord(12, 2))!!
+        assertEquals(1.0f, statsAfter.transmissionEfficiency, 0.001f)
+        assertEquals(6.0f, statsAfter.effectiveGenerated, 0.001f)
+    }
+
+    @Test
+    fun capacitorBankChargesOnSurplusAndDischargesOnOverclockDeficit() {
+        val sim = FactorySimulation(width = 8, height = 10, requiresPower = true)
+        // WindTurbine on WIND_SPOT at (1, 4) -> +6⚡
+        sim.setPowerTerrain(GridCoord(1, 4), PowerTerrainType.WIND_SPOT)
+        sim.setPowerTile(GridCoord(1, 4), PowerTile.WindTurbine)
+        sim.setPowerTile(GridCoord(2, 4), PowerTile.CapacitorBank)
+        sim.setPowerTile(GridCoord(3, 4), PowerTile.PowerCable())
+        sim.setPowerTile(GridCoord(4, 4), PowerTile.PowerCable())
+
+        // Smelter at factory (2, 2) -> power (4, 4), base demand = 4⚡, surplus = +2⚡/tick
+        sim.setTile(GridCoord(2, 2), TileEntity.Smelter(Direction.WEST, Direction.EAST))
+
+        repeat(25) { sim.tick() }
+        // Capped at 40⚡ max storage per CapacitorBank
+        assertEquals(40.0f, sim.getCapacitorCharge(GridCoord(2, 4)), 0.001f)
+
+        // Toggle Overclock on Smelter: demand becomes 4 * 2.5 = 10⚡ (deficit = 4⚡/tick)
+        assertTrue(sim.toggleOverclock(GridCoord(2, 2)))
+        assertTrue(sim.isOverclocked(GridCoord(2, 2)))
+        assertEquals(10.0f, sim.totalPowerDemand, 0.001f)
+
+        // For 5 ticks, CapacitorBank discharges 4⚡/tick (40 -> 20⚡) maintaining 100% satisfaction
+        repeat(5) {
+            sim.tick()
+            assertEquals(1.0f, sim.getMachinePowerSatisfaction(GridCoord(2, 2)), 0.001f)
+        }
+        assertEquals(20.0f, sim.getCapacitorCharge(GridCoord(2, 4)), 0.001f)
+    }
+
+    @Test
+    fun overclockDoublesProcessingSpeedAndBrownoutScalesProportionally() {
+        // 1. Overclocked Smelter (processTicks = 2) at 100% power finishes smelting in 1 processing tick
+        val simFast = FactorySimulation(width = 6, height = 4, requiresPower = true)
+        simFast.setPowerTerrain(GridCoord(1, 3), PowerTerrainType.WATER_CURRENT, Direction.EAST)
+        simFast.setPowerTile(GridCoord(1, 3), PowerTile.HydroGenerator()) // +8⚡
+        simFast.setPowerTerrain(GridCoord(0, 3), PowerTerrainType.WIND_SPOT)
+        simFast.setPowerTile(GridCoord(0, 3), PowerTile.WindTurbine) // +6⚡ -> total 14⚡ >= 10⚡ overclock demand
+        simFast.setPowerTile(GridCoord(2, 3), PowerTile.PowerCable())
+        simFast.setPowerTile(GridCoord(3, 3), PowerTile.PowerCable())
+        simFast.setPowerTile(GridCoord(4, 3), PowerTile.PowerCable())
+
+        simFast.setTile(GridCoord(0, 1), TileEntity.Spawner(ItemType.IRON_ORE, Direction.EAST, spawnIntervalTicks = 10))
+        simFast.setTile(GridCoord(1, 1), TileEntity.Belt(Direction.WEST, Direction.EAST))
+        simFast.setTile(GridCoord(2, 1), TileEntity.Smelter(Direction.WEST, Direction.EAST, processTicks = 2, overclocked = true))
+        simFast.setTile(GridCoord(3, 1), TileEntity.Hatch(ItemType.IRON_INGOT, targetCount = 1))
+
+        // Tick 1: Spawner emits to (1,1). Tick 2: Item enters Smelter at (2,1).
+        // Tick 3: Overclocked Smelter advances 2.0 work in 1 tick and immediately emits into Hatch at (3,1)!
+        simFast.tick()
+        simFast.tick()
+        simFast.tick()
+        val fastHatch = simFast.getTile(GridCoord(3, 1)) as TileEntity.Hatch
+        assertEquals(1, fastHatch.deliveredCount)
+
+        // 2. Brownout Smelter (2⚡ supply vs 4⚡ demand = 50% satisfaction) takes 4 processing ticks instead of 2
+        val simBrownout = FactorySimulation(width = 6, height = 4, requiresPower = true)
+        simBrownout.setPowerTile(GridCoord(1, 3), PowerTile.WindTurbine) // +3⚡ normal
+        simBrownout.setPowerTile(GridCoord(2, 3), PowerTile.PowerCable())
+        simBrownout.setPowerTile(GridCoord(3, 3), PowerTile.PowerCable())
+        simBrownout.setPowerTile(GridCoord(4, 3), PowerTile.PowerCable())
+
+        // Add Filter (2⚡) + Smelter (4⚡) = 6⚡ total demand -> 3⚡ / 6⚡ = 0.50 satisfaction
+        simBrownout.setTile(GridCoord(0, 0), TileEntity.Filter(Direction.WEST, Direction.EAST, Direction.SOUTH))
+        simBrownout.setPowerTile(GridCoord(2, 2), PowerTile.PowerCable())
+
+        simBrownout.setTile(GridCoord(0, 1), TileEntity.Spawner(ItemType.IRON_ORE, Direction.EAST, spawnIntervalTicks = 10))
+        simBrownout.setTile(GridCoord(1, 1), TileEntity.Belt(Direction.WEST, Direction.EAST))
+        simBrownout.setTile(GridCoord(2, 1), TileEntity.Smelter(Direction.WEST, Direction.EAST, processTicks = 2))
+        simBrownout.setTile(GridCoord(3, 1), TileEntity.Hatch(ItemType.IRON_INGOT, targetCount = 1))
+
+        assertEquals(0.5f, simBrownout.getMachinePowerSatisfaction(GridCoord(2, 1)), 0.001f)
+        assertEquals(MachinePowerState.BROWNOUT, simBrownout.getMachinePowerState(GridCoord(2, 1)))
+
+        // Tick 1: emit to (1,1). Tick 2: enter Smelter (2,1).
+        // Ticks 3, 4, 5: workDone = 0.5, 1.0, 1.5 (not done yet at Tick 4!).
+        simBrownout.tick()
+        simBrownout.tick()
+        simBrownout.tick()
+        simBrownout.tick()
+        val brownoutHatch = simBrownout.getTile(GridCoord(3, 1)) as TileEntity.Hatch
+        assertEquals(0, brownoutHatch.deliveredCount)
+
+        // Tick 5 -> 1.5, Tick 6 -> 2.0 (emits to Hatch!)
+        simBrownout.tick()
+        simBrownout.tick()
+        assertEquals(1, brownoutHatch.deliveredCount)
+    }
+
+    @Test
+    fun worldFiveHighVoltageLevelsHaveValidGeometryAndPowerFeatures() {
+        val powerLevels = LevelRepository.powerLevels
+        assertEquals(5, powerLevels.size)
+        assertEquals((141..145).toList(), powerLevels.map { it.id })
+        assertEquals(145, LevelRepository.allLevels.size)
+
+        for (level in powerLevels) {
+            assertTrue("Level ${level.id} must require power", level.requiresPower)
+            assertTrue("Level ${level.id} must have power terrain", level.powerTerrain.isNotEmpty())
+            val powerW = level.width + 4
+            val powerH = level.height + 4
+            for (pt in level.powerTerrain) {
+                assertTrue(pt.coord.x in 0 until powerW && pt.coord.y in 0 until powerH)
+            }
+        }
+
+        // Verify Level 141 ("First Spark") is solvable when powered
+        val sim141 = FactorySimulation()
+        sim141.loadLevel(LevelRepository.getLevel(141))
+        sim141.setTile(GridCoord(2, 3), TileEntity.Belt(Direction.WEST, Direction.EAST))
+        sim141.setTile(GridCoord(3, 3), TileEntity.Smelter(Direction.WEST, Direction.SOUTH))
+        sim141.setTile(GridCoord(3, 4), TileEntity.Belt(Direction.NORTH, Direction.SOUTH))
+        sim141.setTile(GridCoord(3, 5), TileEntity.Belt(Direction.NORTH, Direction.EAST))
+        sim141.setTile(GridCoord(4, 5), TileEntity.Belt(Direction.WEST, Direction.EAST))
+        sim141.setTile(GridCoord(5, 5), TileEntity.Belt(Direction.WEST, Direction.EAST))
+        sim141.setTile(GridCoord(6, 5), TileEntity.Belt(Direction.WEST, Direction.SOUTH))
+
+        // Place WindTurbine on WIND_SPOT (1, 5) and route cables around ROCK (2, 5) to Smelter at power (5, 5)
+        assertTrue(sim141.setPowerTile(GridCoord(1, 5), PowerTile.WindTurbine))
+        assertTrue(sim141.setPowerTile(GridCoord(1, 6), PowerTile.PowerCable()))
+        assertTrue(sim141.setPowerTile(GridCoord(2, 6), PowerTile.PowerCable()))
+        assertTrue(sim141.setPowerTile(GridCoord(3, 6), PowerTile.PowerCable()))
+        assertTrue(sim141.setPowerTile(GridCoord(4, 6), PowerTile.PowerCable()))
+        assertTrue(sim141.setPowerTile(GridCoord(5, 6), PowerTile.PowerCable()))
+        assertTrue(sim141.setPowerTile(GridCoord(5, 5), PowerTile.PowerCable()))
+
+        repeat(100) { if (!sim141.isComplete) sim141.tick() }
+        assertTrue("Level 141 should complete when powered", sim141.isComplete)
+    }
 }
+

@@ -1,5 +1,7 @@
 package com.microfactory.sim
 
+import kotlin.math.min
+
 data class MachineStatus(
     val inputCount: Int,
     val maxInputs: Int,
@@ -7,26 +9,55 @@ data class MachineStatus(
     val isProcessing: Boolean,
     val hasOutputReady: Boolean,
     val slotAFilled: Boolean = false,
-    val slotBFilled: Boolean = false
+    val slotBFilled: Boolean = false,
+    val powerSatisfaction: Float = 1f,
+    val isOverclocked: Boolean = false,
+    val powerState: MachinePowerState = MachinePowerState.POWERED
 )
 
 /**
  * Pure Kotlin factory grid simulation running at a fixed base tick rate (4 ticks/sec).
  * Uses two-pass tick resolution so conveyor trains advance in lockstep without overlaps or teleportation.
+ *
+ * Supports dual-layer architecture:
+ * - Layer 0 (Factory Layer): `width x height` floor for belts, sources, sinks, and processing machines.
+ * - Layer 1 (Power Layer): `(width + 4) x (height + 4)` expanded grid with a 2-tile outer perimeter ring
+ *   (`powerX = factoryX + 2`, `powerY = factoryY + 2`).
  */
 class FactorySimulation(
     width: Int = 8,
-    height: Int = 10
+    height: Int = 10,
+    requiresPower: Boolean = false
 ) {
     var width: Int = width
         private set
     var height: Int = height
         private set
 
+    var requiresPower: Boolean = requiresPower
+        private set
+
+    val powerWidth: Int
+        get() = width + POWER_PERIMETER * 2
+
+    val powerHeight: Int
+        get() = height + POWER_PERIMETER * 2
+
     companion object {
         const val BASE_TICKS_PER_SECOND = 4.0
         const val TICK_DURATION_NANOS = 250_000_000L
         private const val IPM_WINDOW_TICKS = 240L // 60 simulated seconds at 4 ticks/sec
+
+        const val POWER_PERIMETER = 2
+        const val WIND_TURBINE_BASE_OUTPUT = 3f
+        const val WIND_SPOT_MULTIPLIER = 2.0f
+        const val HYDRO_GENERATOR_OUTPUT = 8f
+        const val CAPACITOR_MAX_CHARGE = 40f
+        const val TRANSMISSION_FREE_DISTANCE = 8
+        const val TRANSMISSION_LOSS_STEP_TILES = 4f
+        const val TRANSMISSION_LOSS_PER_STEP = 0.10f
+        const val OVERCLOCK_SPEED_MULTIPLIER = 2.0f
+        const val OVERCLOCK_POWER_MULTIPLIER = 2.5f
 
         private const val LANE_NORMAL = 0
         private const val LANE_BRIDGE_HORIZ = 1
@@ -51,10 +82,27 @@ class FactorySimulation(
             ItemType.IRON_PLATE, ItemType.COPPER_WIRE, ItemType.GEAR, ItemType.CIRCUIT -> true
             else -> false
         }
+
+        fun transmissionEfficiencyForDistance(distanceSteps: Int): Float {
+            if (distanceSteps <= TRANSMISSION_FREE_DISTANCE) return 1.0f
+            val extraTiles = (distanceSteps - TRANSMISSION_FREE_DISTANCE).toFloat()
+            val loss = (extraTiles / TRANSMISSION_LOSS_STEP_TILES) * TRANSMISSION_LOSS_PER_STEP
+            return (1.0f - loss).coerceIn(0.1f, 1.0f)
+        }
     }
 
     private var grid: Array<Array<TileEntity>> =
         Array(height) { Array(width) { TileEntity.Empty } }
+
+    private var powerGrid: Array<Array<PowerTile>> =
+        Array(powerHeight) { Array(powerWidth) { PowerTile.Empty } }
+
+    private var powerTerrainGrid: Array<Array<PowerTerrainTile>> =
+        Array(powerHeight) { y ->
+            Array(powerWidth) { x ->
+                PowerTerrainTile(GridCoord(x, y), PowerTerrainType.NORMAL)
+            }
+        }
 
     private val activeItems = mutableListOf<MovingItem>()
     private val recentConsumedItems = mutableListOf<MovingItem>()
@@ -64,7 +112,13 @@ class FactorySimulation(
     private val spawnerSecondaryTurn = mutableMapOf<GridCoord, Boolean>()
     private val singleMachines = mutableMapOf<GridCoord, SingleMachineState>()
     private val assemblers = mutableMapOf<GridCoord, AssemblerState>()
+    private val filterWork = mutableMapOf<GridCoord, Float>()
     private val deliveryHistoryTicks = ArrayDeque<Long>()
+
+    private val capacitorCharges = mutableMapOf<GridCoord, Float>()
+    private val networkIdByPowerCoord = mutableMapOf<GridCoord, Int>()
+    private val networkStatsById = mutableMapOf<Int, PowerNetworkStats>()
+    private val tileTransmissionEfficiency = mutableMapOf<GridCoord, Float>()
 
     private var nextItemId = 1L
     private var loadedLevel: LevelConfig? = null
@@ -119,12 +173,56 @@ class FactorySimulation(
             return hasHatch
         }
 
+    val totalRawGeneratedPower: Float
+        get() = networkStatsById.values.sumOf { it.rawGenerated.toDouble() }.toFloat()
+
+    val totalGeneratedPower: Float
+        get() = networkStatsById.values.sumOf { it.effectiveGenerated.toDouble() }.toFloat()
+
+    val totalPowerDemand: Float
+        get() {
+            var sum = 0f
+            for (y in 0 until height) {
+                for (x in 0 until width) {
+                    sum += grid[y][x].powerDemand()
+                }
+            }
+            return sum
+        }
+
+    val totalCapacitorStored: Float
+        get() = capacitorCharges.values.sum()
+
+    val totalCapacitorCapacity: Float
+        get() = capacitorCharges.size * CAPACITOR_MAX_CHARGE
+
+    val overallPowerSatisfaction: Float
+        get() {
+            if (!requiresPower) return 1.0f
+            var totalDemand = 0f
+            var satisfiedDemand = 0f
+            for (y in 0 until height) {
+                for (x in 0 until width) {
+                    val tile = grid[y][x]
+                    if (tile.isPowerConsumer()) {
+                        val d = tile.powerDemand()
+                        totalDemand += d
+                        satisfiedDemand += d * getMachinePowerSatisfaction(GridCoord(x, y))
+                    }
+                }
+            }
+            if (totalDemand <= 0f) {
+                return if (totalGeneratedPower > 0f || totalCapacitorStored > 0f) 1.0f else 0.0f
+            }
+            return (satisfiedDemand / totalDemand).coerceIn(0f, 1f)
+        }
+
     private data class OccupantSlot(val coord: GridCoord, val lane: Int)
 
     private data class SingleMachineState(
         var inputItem: ItemType? = null,
         var outputItem: ItemType? = null,
-        var ticksDone: Int = 0,
+        var workDone: Float = 0f,
         var totalTicks: Int = 2,
         var enteredThisTick: Boolean = false
     )
@@ -133,7 +231,7 @@ class FactorySimulation(
         var slotAItem: ItemType? = null,
         var slotBItem: ItemType? = null,
         var outputItem: ItemType? = null,
-        var ticksDone: Int = 0,
+        var workDone: Float = 0f,
         var totalTicks: Int = 3,
         var isProcessing: Boolean = false,
         var enteredThisTick: Boolean = false
@@ -156,6 +254,26 @@ class FactorySimulation(
     fun inBounds(coord: GridCoord): Boolean =
         coord.x in 0 until width && coord.y in 0 until height
 
+    fun inPowerBounds(powerCoord: GridCoord): Boolean =
+        powerCoord.x in 0 until powerWidth && powerCoord.y in 0 until powerHeight
+
+    fun factoryToPower(factoryCoord: GridCoord): GridCoord =
+        GridCoord(factoryCoord.x + POWER_PERIMETER, factoryCoord.y + POWER_PERIMETER)
+
+    fun powerToFactory(powerCoord: GridCoord): GridCoord? {
+        val fx = powerCoord.x - POWER_PERIMETER
+        val fy = powerCoord.y - POWER_PERIMETER
+        return if (fx in 0 until width && fy in 0 until height) GridCoord(fx, fy) else null
+    }
+
+    fun isOuterPerimeter(powerCoord: GridCoord): Boolean =
+        inPowerBounds(powerCoord) && powerToFactory(powerCoord) == null
+
+    fun setRequiresPower(enabled: Boolean) {
+        requiresPower = enabled
+        recomputePowerNetworks(advanceTick = false)
+    }
+
     fun getTile(coord: GridCoord): TileEntity =
         if (inBounds(coord)) grid[coord.y][coord.x] else TileEntity.Rock
 
@@ -174,6 +292,353 @@ class FactorySimulation(
         spawnerSecondaryTurn.remove(coord)
         singleMachines.remove(coord)
         assemblers.remove(coord)
+        filterWork.remove(coord)
+        recomputePowerNetworks(advanceTick = false)
+    }
+
+    fun getPowerTerrain(powerCoord: GridCoord): PowerTerrainTile =
+        if (inPowerBounds(powerCoord)) {
+            powerTerrainGrid[powerCoord.y][powerCoord.x]
+        } else {
+            PowerTerrainTile(powerCoord, PowerTerrainType.ROCK)
+        }
+
+    fun setPowerTerrain(
+        powerCoord: GridCoord,
+        type: PowerTerrainType,
+        flowDir: Direction = Direction.SOUTH
+    ) {
+        if (!inPowerBounds(powerCoord)) return
+        if (loadedLevel == null && type != PowerTerrainType.NORMAL) {
+            requiresPower = true
+        }
+        powerTerrainGrid[powerCoord.y][powerCoord.x] = PowerTerrainTile(powerCoord, type, flowDir)
+        if (type == PowerTerrainType.ROCK) {
+            powerGrid[powerCoord.y][powerCoord.x] = PowerTile.Empty
+            capacitorCharges.remove(powerCoord)
+        }
+        updateCableMasks()
+        recomputePowerNetworks(advanceTick = false)
+    }
+
+    fun getPowerTile(powerCoord: GridCoord): PowerTile =
+        if (inPowerBounds(powerCoord)) powerGrid[powerCoord.y][powerCoord.x] else PowerTile.Empty
+
+    fun canPlacePowerTile(powerCoord: GridCoord, tile: PowerTile): Boolean {
+        if (!inPowerBounds(powerCoord)) return false
+        if (tile == PowerTile.Empty) return true
+        val terrain = powerTerrainGrid[powerCoord.y][powerCoord.x]
+        if (terrain.type == PowerTerrainType.ROCK) return false
+        if (tile is PowerTile.HydroGenerator && terrain.type != PowerTerrainType.WATER_CURRENT) {
+            return false
+        }
+        return true
+    }
+
+    fun setPowerTile(powerCoord: GridCoord, tile: PowerTile): Boolean {
+        if (!canPlacePowerTile(powerCoord, tile)) return false
+        if (loadedLevel == null && tile != PowerTile.Empty) {
+            requiresPower = true
+        }
+        val terrain = powerTerrainGrid[powerCoord.y][powerCoord.x]
+        val resolvedTile = when (tile) {
+            is PowerTile.HydroGenerator -> tile.copy(direction = terrain.flowDir)
+            else -> tile
+        }
+        powerGrid[powerCoord.y][powerCoord.x] = resolvedTile
+        if (resolvedTile is PowerTile.CapacitorBank) {
+            capacitorCharges.putIfAbsent(powerCoord, 0f)
+        } else {
+            capacitorCharges.remove(powerCoord)
+        }
+        updateCableMasks()
+        recomputePowerNetworks(advanceTick = false)
+        return true
+    }
+
+    fun clearPowerTile(powerCoord: GridCoord): Boolean {
+        if (!inPowerBounds(powerCoord)) return false
+        val current = powerGrid[powerCoord.y][powerCoord.x]
+        if (!current.isPlayerEditable()) return false
+        return setPowerTile(powerCoord, PowerTile.Empty)
+    }
+
+    private fun updateCableMasks() {
+        for (y in 0 until powerHeight) {
+            for (x in 0 until powerWidth) {
+                val current = powerGrid[y][x]
+                if (current is PowerTile.PowerCable) {
+                    var mask = 0
+                    val coord = GridCoord(x, y)
+                    for (dir in Direction.entries) {
+                        val neighbor = coord + dir
+                        if (inPowerBounds(neighbor) && powerGrid[neighbor.y][neighbor.x].isConductive()) {
+                            mask = mask or PowerTile.PowerCable.maskForDirection(dir)
+                        }
+                    }
+                    powerGrid[y][x] = current.copy(connectionMask = mask)
+                }
+            }
+        }
+    }
+
+    fun getGeneratorOutput(powerCoord: GridCoord): Float {
+        if (!inPowerBounds(powerCoord)) return 0f
+        val terrain = powerTerrainGrid[powerCoord.y][powerCoord.x]
+        return when (powerGrid[powerCoord.y][powerCoord.x]) {
+            PowerTile.WindTurbine -> {
+                val mult = if (terrain.type == PowerTerrainType.WIND_SPOT) WIND_SPOT_MULTIPLIER else 1.0f
+                WIND_TURBINE_BASE_OUTPUT * mult
+            }
+            is PowerTile.HydroGenerator -> {
+                if (terrain.type == PowerTerrainType.WATER_CURRENT) HYDRO_GENERATOR_OUTPUT else 0f
+            }
+            else -> 0f
+        }
+    }
+
+    fun getCapacitorCharge(powerCoord: GridCoord): Float =
+        capacitorCharges[powerCoord] ?: 0f
+
+    fun setCapacitorCharge(powerCoord: GridCoord, charge: Float) {
+        if (!inPowerBounds(powerCoord)) return
+        if (powerGrid[powerCoord.y][powerCoord.x] is PowerTile.CapacitorBank) {
+            capacitorCharges[powerCoord] = charge.coerceIn(0f, CAPACITOR_MAX_CHARGE)
+            recomputePowerNetworks(advanceTick = false)
+        }
+    }
+
+    fun getTransmissionEfficiency(powerCoord: GridCoord): Float =
+        tileTransmissionEfficiency[powerCoord] ?: 0f
+
+    fun getPowerNetworkStatsForPowerCoord(powerCoord: GridCoord): PowerNetworkStats? {
+        val netId = networkIdByPowerCoord[powerCoord] ?: return null
+        return networkStatsById[netId]
+    }
+
+    fun getPowerNetworkStatsForMachine(factoryCoord: GridCoord): PowerNetworkStats? {
+        if (!inBounds(factoryCoord)) return null
+        val powerCoord = factoryToPower(factoryCoord)
+        val powerTile = getPowerTile(powerCoord)
+        if (!powerTile.canSupplyMachineAbove()) return null
+        val netId = networkIdByPowerCoord[powerCoord] ?: return null
+        return networkStatsById[netId]
+    }
+
+    fun getMachinePowerSatisfaction(factoryCoord: GridCoord): Float {
+        if (!requiresPower) return 1.0f
+        val tile = getTile(factoryCoord)
+        if (!tile.isPowerConsumer()) return 1.0f
+        val stats = getPowerNetworkStatsForMachine(factoryCoord) ?: return 0f
+        return stats.satisfaction
+    }
+
+    fun getMachinePowerState(factoryCoord: GridCoord): MachinePowerState {
+        val tile = getTile(factoryCoord)
+        if (!requiresPower) {
+            return if (tile.isOverclocked()) MachinePowerState.OVERCLOCKED else MachinePowerState.POWERED
+        }
+        val sat = getMachinePowerSatisfaction(factoryCoord)
+        return when {
+            sat <= 0.001f -> MachinePowerState.UNPOWERED
+            sat < 0.999f -> MachinePowerState.BROWNOUT
+            tile.isOverclocked() -> MachinePowerState.OVERCLOCKED
+            else -> MachinePowerState.POWERED
+        }
+    }
+
+    fun toggleOverclock(coord: GridCoord): Boolean {
+        if (!inBounds(coord)) return false
+        val current = grid[coord.y][coord.x]
+        if (!current.isPowerConsumer()) return false
+        grid[coord.y][coord.x] = current.withOverclock(!current.isOverclocked())
+        recomputePowerNetworks(advanceTick = false)
+        return true
+    }
+
+    fun setOverclock(coord: GridCoord, enabled: Boolean): Boolean {
+        if (!inBounds(coord)) return false
+        val current = grid[coord.y][coord.x]
+        if (!current.isPowerConsumer()) return false
+        grid[coord.y][coord.x] = current.withOverclock(enabled)
+        recomputePowerNetworks(advanceTick = false)
+        return true
+    }
+
+    fun isOverclocked(coord: GridCoord): Boolean =
+        getTile(coord).isOverclocked()
+
+    private fun recomputePowerNetworks(advanceTick: Boolean) {
+        networkIdByPowerCoord.clear()
+        networkStatsById.clear()
+        tileTransmissionEfficiency.clear()
+
+        val visited = HashSet<GridCoord>()
+        var nextNetworkId = 1
+
+        for (py in 0 until powerHeight) {
+            for (px in 0 until powerWidth) {
+                val start = GridCoord(px, py)
+                if (!powerGrid[py][px].isConductive() || start in visited) continue
+
+                val netId = nextNetworkId++
+                val component = mutableListOf<GridCoord>()
+                val queue = ArrayDeque<GridCoord>()
+                queue.add(start)
+                visited.add(start)
+
+                while (queue.isNotEmpty()) {
+                    val cur = queue.removeFirst()
+                    component.add(cur)
+                    networkIdByPowerCoord[cur] = netId
+                    for (dir in Direction.entries) {
+                        val next = cur + dir
+                        if (inPowerBounds(next) && next !in visited && powerGrid[next.y][next.x].isConductive()) {
+                            visited.add(next)
+                            queue.add(next)
+                        }
+                    }
+                }
+
+                val generators = mutableListOf<GridCoord>()
+                val capacitors = mutableListOf<GridCoord>()
+                var rawGen = 0f
+
+                for (coord in component) {
+                    when (powerGrid[coord.y][coord.x]) {
+                        PowerTile.WindTurbine, is PowerTile.HydroGenerator -> {
+                            val out = getGeneratorOutput(coord)
+                            if (out > 0f) {
+                                generators.add(coord)
+                                rawGen += out
+                            }
+                        }
+                        PowerTile.CapacitorBank -> capacitors.add(coord)
+                        else -> Unit
+                    }
+                }
+
+                val distMap = HashMap<GridCoord, Int>(component.size * 2)
+                val bfsQueue = ArrayDeque<GridCoord>()
+                if (generators.isNotEmpty()) {
+                    // Generators and any connected CapacitorBank tiles act as distance-0 sources
+                    for (g in generators) {
+                        distMap[g] = 0
+                        bfsQueue.add(g)
+                    }
+                    for (c in capacitors) {
+                        if (c !in distMap) {
+                            distMap[c] = 0
+                            bfsQueue.add(c)
+                        }
+                    }
+                } else {
+                    for (c in capacitors) {
+                        if ((capacitorCharges[c] ?: 0f) > 0f) {
+                            distMap[c] = 0
+                            bfsQueue.add(c)
+                        }
+                    }
+                }
+
+                val componentSet = component.toHashSet()
+                while (bfsQueue.isNotEmpty()) {
+                    val cur = bfsQueue.removeFirst()
+                    val curDist = distMap[cur] ?: 0
+                    for (dir in Direction.entries) {
+                        val next = cur + dir
+                        if (next in componentSet && next !in distMap) {
+                            distMap[next] = curDist + 1
+                            bfsQueue.add(next)
+                        }
+                    }
+                }
+
+                for (coord in component) {
+                    val d = distMap[coord]
+                    tileTransmissionEfficiency[coord] = if (d != null) {
+                        transmissionEfficiencyForDistance(d)
+                    } else {
+                        0f
+                    }
+                }
+
+                // Gather Layer 0 machines drawing from this sub-network
+                var demand = 0f
+                var weightedEfficiencySum = 0f
+                for (coord in component) {
+                    if (!powerGrid[coord.y][coord.x].canSupplyMachineAbove()) continue
+                    val factoryCoord = powerToFactory(coord) ?: continue
+                    val factoryTile = grid[factoryCoord.y][factoryCoord.x]
+                    if (factoryTile.isPowerConsumer()) {
+                        val mDemand = factoryTile.powerDemand()
+                        val eff = tileTransmissionEfficiency[coord] ?: 1.0f
+                        demand += mDemand
+                        weightedEfficiencySum += mDemand * eff
+                    }
+                }
+
+                val networkEfficiency = when {
+                    generators.isEmpty() -> 1.0f
+                    demand > 0f -> (weightedEfficiencySum / demand).coerceIn(0.1f, 1.0f)
+                    else -> {
+                        component.minOfOrNull { tileTransmissionEfficiency[it] ?: 1.0f } ?: 1.0f
+                    }
+                }
+
+                val effectiveGen = rawGen * networkEfficiency
+                val capacity = capacitors.size * CAPACITOR_MAX_CHARGE
+                var storedBefore = capacitors.sumOf { (capacitorCharges[it] ?: 0f).toDouble() }.toFloat()
+
+                val discharge = if (demand > effectiveGen) {
+                    min(demand - effectiveGen, storedBefore)
+                } else {
+                    0f
+                }
+
+                if (advanceTick && capacitors.isNotEmpty()) {
+                    if (effectiveGen > demand) {
+                        var remainingSurplus = effectiveGen - demand
+                        for (c in capacitors) {
+                            if (remainingSurplus <= 0f) break
+                            val cur = capacitorCharges[c] ?: 0f
+                            val room = (CAPACITOR_MAX_CHARGE - cur).coerceAtLeast(0f)
+                            val added = min(room, remainingSurplus)
+                            capacitorCharges[c] = cur + added
+                            remainingSurplus -= added
+                        }
+                    } else if (discharge > 0f) {
+                        var remainingDischarge = discharge
+                        for (c in capacitors) {
+                            if (remainingDischarge <= 0f) break
+                            val cur = capacitorCharges[c] ?: 0f
+                            val drained = min(cur, remainingDischarge)
+                            capacitorCharges[c] = cur - drained
+                            remainingDischarge -= drained
+                        }
+                    }
+                    storedBefore = capacitors.sumOf { (capacitorCharges[it] ?: 0f).toDouble() }.toFloat()
+                }
+
+                val satisfaction = if (demand <= 0f) {
+                    if (effectiveGen > 0f || storedBefore > 0f) 1.0f else 0.0f
+                } else {
+                    ((effectiveGen + discharge) / demand).coerceIn(0f, 1.0f)
+                }
+
+                networkStatsById[netId] = PowerNetworkStats(
+                    networkId = netId,
+                    rawGenerated = rawGen,
+                    effectiveGenerated = effectiveGen,
+                    transmissionEfficiency = networkEfficiency,
+                    demand = demand,
+                    capacitorStored = storedBefore,
+                    capacitorCapacity = capacity,
+                    capacitorDischarge = discharge,
+                    satisfaction = satisfaction
+                )
+            }
+        }
     }
 
     fun setFilterItem(coord: GridCoord, itemType: ItemType): Boolean {
@@ -316,7 +781,14 @@ class FactorySimulation(
             width = level.width
             height = level.height
             grid = Array(height) { Array(width) { TileEntity.Empty } }
+            powerGrid = Array(powerHeight) { Array(powerWidth) { PowerTile.Empty } }
+            powerTerrainGrid = Array(powerHeight) { y ->
+                Array(powerWidth) { x ->
+                    PowerTerrainTile(GridCoord(x, y), PowerTerrainType.NORMAL)
+                }
+            }
         }
+        requiresPower = level.requiresPower
         loadedLevel = level
         resetBoard()
     }
@@ -327,6 +799,12 @@ class FactorySimulation(
                 grid[y][x] = TileEntity.Empty
             }
         }
+        for (py in 0 until powerHeight) {
+            for (px in 0 until powerWidth) {
+                powerGrid[py][px] = PowerTile.Empty
+                powerTerrainGrid[py][px] = PowerTerrainTile(GridCoord(px, py), PowerTerrainType.NORMAL)
+            }
+        }
         activeItems.clear()
         recentConsumedItems.clear()
         bridgeVerticalItems.clear()
@@ -334,11 +812,17 @@ class FactorySimulation(
         spawnerSecondaryTurn.clear()
         singleMachines.clear()
         assemblers.clear()
+        filterWork.clear()
+        capacitorCharges.clear()
+        networkIdByPowerCoord.clear()
+        networkStatsById.clear()
+        tileTransmissionEfficiency.clear()
         deliveryHistoryTicks.clear()
         tickCount = 0L
         nextItemId = 1L
 
         val level = loadedLevel ?: return
+        requiresPower = level.requiresPower
         for (rock in level.rocks) {
             if (inBounds(rock)) grid[rock.y][rock.x] = TileEntity.Rock
         }
@@ -355,6 +839,12 @@ class FactorySimulation(
                 }
             }
         }
+        for (terrain in level.powerTerrain) {
+            if (inPowerBounds(terrain.coord)) {
+                powerTerrainGrid[terrain.coord.y][terrain.coord.x] = terrain
+            }
+        }
+        recomputePowerNetworks(advanceTick = false)
     }
 
     fun getHatches(): List<PlacedTile> {
@@ -371,25 +861,49 @@ class FactorySimulation(
     }
 
     fun getMachineStatus(coord: GridCoord): MachineStatus? {
-        return when (getTile(coord)) {
+        val tile = getTile(coord)
+        val sat = getMachinePowerSatisfaction(coord)
+        val pState = getMachinePowerState(coord)
+        return when (tile) {
             is TileEntity.Smelter, is TileEntity.Press -> {
-                val state = singleMachines[coord] ?: return MachineStatus(0, 1, 0f, false, false)
+                val state = singleMachines[coord] ?: return MachineStatus(
+                    inputCount = 0,
+                    maxInputs = 1,
+                    progress = 0f,
+                    isProcessing = false,
+                    hasOutputReady = false,
+                    powerSatisfaction = sat,
+                    isOverclocked = tile.isOverclocked(),
+                    powerState = pState
+                )
                 val progress = if (state.totalTicks > 0 && state.inputItem != null) {
-                    (state.ticksDone.toFloat() / state.totalTicks).coerceIn(0f, 1f)
+                    (state.workDone / state.totalTicks).coerceIn(0f, 1f)
                 } else 0f
                 MachineStatus(
                     inputCount = if (state.inputItem != null) 1 else 0,
                     maxInputs = 1,
                     progress = if (state.outputItem != null) 1f else progress,
                     isProcessing = state.inputItem != null && state.outputItem == null,
-                    hasOutputReady = state.outputItem != null
+                    hasOutputReady = state.outputItem != null,
+                    powerSatisfaction = sat,
+                    isOverclocked = tile.isOverclocked(),
+                    powerState = pState
                 )
             }
             is TileEntity.Assembler -> {
-                val state = assemblers[coord] ?: return MachineStatus(0, 2, 0f, false, false)
+                val state = assemblers[coord] ?: return MachineStatus(
+                    inputCount = 0,
+                    maxInputs = 2,
+                    progress = 0f,
+                    isProcessing = false,
+                    hasOutputReady = false,
+                    powerSatisfaction = sat,
+                    isOverclocked = tile.overclocked,
+                    powerState = pState
+                )
                 val count = (if (state.slotAItem != null) 1 else 0) + (if (state.slotBItem != null) 1 else 0)
                 val progress = if (state.totalTicks > 0 && state.isProcessing) {
-                    (state.ticksDone.toFloat() / state.totalTicks).coerceIn(0f, 1f)
+                    (state.workDone / state.totalTicks).coerceIn(0f, 1f)
                 } else 0f
                 MachineStatus(
                     inputCount = count,
@@ -398,7 +912,10 @@ class FactorySimulation(
                     isProcessing = state.isProcessing,
                     hasOutputReady = state.outputItem != null,
                     slotAFilled = state.slotAItem != null,
-                    slotBFilled = state.slotBItem != null
+                    slotBFilled = state.slotBItem != null,
+                    powerSatisfaction = sat,
+                    isOverclocked = tile.overclocked,
+                    powerState = pState
                 )
             }
             else -> null
@@ -415,11 +932,29 @@ class FactorySimulation(
     }
 
     /**
-     * Advances the simulation by 1 tick using two-pass movement resolution followed by machine & spawner updates.
+     * Advances the simulation by 1 tick using power grid evaluation, two-pass movement resolution,
+     * and machine & spawner updates.
      */
     fun tick() {
         tickCount++
         recentConsumedItems.clear()
+
+        // Evaluate power sub-networks and capacitor bank charge/discharge for this tick.
+        recomputePowerNetworks(advanceTick = true)
+
+        // Accumulate Filter work on power levels.
+        if (requiresPower) {
+            for (y in 0 until height) {
+                for (x in 0 until width) {
+                    val f = grid[y][x] as? TileEntity.Filter ?: continue
+                    val coord = GridCoord(x, y)
+                    val sat = getMachinePowerSatisfaction(coord)
+                    val mult = if (f.overclocked) OVERCLOCK_SPEED_MULTIPLIER else 1.0f
+                    val nextWork = ((filterWork[coord] ?: 0f) + sat * mult).coerceAtMost(2.0f)
+                    filterWork[coord] = nextWork
+                }
+            }
+        }
 
         for (item in activeItems) {
             item.prevCoord = item.currentCoord
@@ -478,6 +1013,15 @@ class FactorySimulation(
             val item = occupantAt[slot] ?: return true
             val pos = slot.coord
             val tile = getTile(pos)
+
+            if (requiresPower && tile is TileEntity.Filter) {
+                val availableWork = filterWork[pos] ?: 0f
+                if (availableWork + 1e-5f < 1.0f) {
+                    decision[slot] = false
+                    return false
+                }
+            }
+
             val candidateDirs = when (tile) {
                 is TileEntity.Belt -> listOf(tile.outputDir)
                 is TileEntity.Splitter -> if (tile.toggleLeft) {
@@ -672,6 +1216,10 @@ class FactorySimulation(
         while (iterator.hasNext()) {
             val item = iterator.next()
             val action = plannedMoves[item.id] ?: continue
+            val originCoord = item.currentCoord
+            if (requiresPower && getTile(originCoord) is TileEntity.Filter) {
+                filterWork[originCoord] = ((filterWork[originCoord] ?: 1f) - 1f).coerceAtLeast(0f)
+            }
             when (action) {
                 is PlannedAction.MoveToTile -> {
                     val currentTile = getTile(item.currentCoord)
@@ -713,7 +1261,7 @@ class FactorySimulation(
                         is TileEntity.Smelter -> {
                             singleMachines[action.target] = SingleMachineState(
                                 inputItem = item.type,
-                                ticksDone = 0,
+                                workDone = 0f,
                                 totalTicks = machineTile.processTicks.coerceAtLeast(1),
                                 enteredThisTick = true
                             )
@@ -721,7 +1269,7 @@ class FactorySimulation(
                         is TileEntity.Press -> {
                             singleMachines[action.target] = SingleMachineState(
                                 inputItem = item.type,
-                                ticksDone = 0,
+                                workDone = 0f,
                                 totalTicks = machineTile.processTicks.coerceAtLeast(1),
                                 enteredThisTick = true
                             )
@@ -734,7 +1282,7 @@ class FactorySimulation(
                             state.enteredThisTick = true
                             if (state.slotAItem != null && state.slotBItem != null) {
                                 state.isProcessing = true
-                                state.ticksDone = 0
+                                state.workDone = 0f
                             }
                         }
                         else -> Unit
@@ -831,7 +1379,7 @@ class FactorySimulation(
                     if (fromCoord == target + targetTile.inputDir && canSmelterAccept(target, itemType)) {
                         singleMachines[target] = SingleMachineState(
                             inputItem = itemType,
-                            ticksDone = 0,
+                            workDone = 0f,
                             totalTicks = targetTile.processTicks.coerceAtLeast(1),
                             enteredThisTick = true
                         )
@@ -843,7 +1391,7 @@ class FactorySimulation(
                     if (fromCoord == target + targetTile.inputDir && canPressAccept(target, itemType)) {
                         singleMachines[target] = SingleMachineState(
                             inputItem = itemType,
-                            ticksDone = 0,
+                            workDone = 0f,
                             totalTicks = targetTile.processTicks.coerceAtLeast(1),
                             enteredThisTick = true
                         )
@@ -861,7 +1409,7 @@ class FactorySimulation(
                         state.enteredThisTick = true
                         if (state.slotAItem != null && state.slotBItem != null) {
                             state.isProcessing = true
-                            state.ticksDone = 0
+                            state.workDone = 0f
                         }
                         recentConsumedItems.add(MovingItem(nextItemId++, itemType, fromCoord, target))
                         true
@@ -882,8 +1430,10 @@ class FactorySimulation(
                             continue
                         }
                         if (state.outputItem == null && state.inputItem != null) {
-                            state.ticksDone++
-                            if (state.ticksDone >= state.totalTicks) {
+                            val sat = getMachinePowerSatisfaction(coord)
+                            val mult = if (tile.overclocked) OVERCLOCK_SPEED_MULTIPLIER else 1.0f
+                            state.workDone += sat * mult
+                            if (state.workDone + 1e-5f >= state.totalTicks) {
                                 state.outputItem = when (state.inputItem) {
                                     ItemType.IRON_ORE -> ItemType.IRON_INGOT
                                     ItemType.COPPER_ORE -> ItemType.COPPER_INGOT
@@ -904,8 +1454,10 @@ class FactorySimulation(
                             continue
                         }
                         if (state.outputItem == null && state.inputItem != null) {
-                            state.ticksDone++
-                            if (state.ticksDone >= state.totalTicks) {
+                            val sat = getMachinePowerSatisfaction(coord)
+                            val mult = if (tile.overclocked) OVERCLOCK_SPEED_MULTIPLIER else 1.0f
+                            state.workDone += sat * mult
+                            if (state.workDone + 1e-5f >= state.totalTicks) {
                                 state.outputItem = state.inputItem?.let(::pressOutputFor)
                             }
                         }
@@ -922,8 +1474,10 @@ class FactorySimulation(
                             continue
                         }
                         if (state.outputItem == null && state.isProcessing) {
-                            state.ticksDone++
-                            if (state.ticksDone >= state.totalTicks) {
+                            val sat = getMachinePowerSatisfaction(coord)
+                            val mult = if (tile.overclocked) OVERCLOCK_SPEED_MULTIPLIER else 1.0f
+                            state.workDone += sat * mult
+                            if (state.workDone + 1e-5f >= state.totalTicks) {
                                 val a = state.slotAItem
                                 val b = state.slotBItem
                                 state.slotAItem = null

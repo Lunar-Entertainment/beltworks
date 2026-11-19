@@ -38,19 +38,30 @@ import com.microfactory.render.BuildTool
 import com.microfactory.render.FactoryColors
 import com.microfactory.render.drawGear
 import com.microfactory.render.drawItemShape
+import com.microfactory.sim.GridLayer
 import com.microfactory.sim.ItemType
+import com.microfactory.sim.TileEntity
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 @Composable
 fun MachinePalette(
     levelId: Int,
+    activeLayer: GridLayer = GridLayer.FACTORY,
+    requiresPower: Boolean = false,
     selectedTool: BuildTool,
     selectedFilterItem: ItemType,
     showFilterBar: Boolean,
+    activeMachineTile: TileEntity? = null,
     onSelectTool: (BuildTool) -> Unit,
     onSelectFilterItem: (ItemType) -> Unit,
+    onToggleOverclock: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    val visibleTools = BuildTool.entries.filter { levelId >= it.unlockedFromLevel }
+    val visibleTools = BuildTool.entries.filter {
+        it.isVisibleFor(activeLayer, levelId, requiresPower)
+    }
 
     Column(
         modifier = modifier
@@ -60,7 +71,42 @@ fun MachinePalette(
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        if (showFilterBar) {
+        if (activeLayer == GridLayer.FACTORY && requiresPower && activeMachineTile != null && activeMachineTile.isPowerConsumer()) {
+            val isOverclocked = activeMachineTile.isOverclocked()
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Machine Power: ${activeMachineTile.powerDemand()}⚡ (${if (isOverclocked) "2.0× Overclocked" else "1.0× Standard"})",
+                    color = if (isOverclocked) FactoryColors.OverclockCyan else FactoryColors.TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isOverclocked) FactoryColors.OverclockBody else FactoryColors.GridCell)
+                        .border(
+                            1.dp,
+                            if (isOverclocked) FactoryColors.OverclockCyan else FactoryColors.GridCellBorder,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable { onToggleOverclock() }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = if (isOverclocked) "⚡ OVERCLOCK: ON (2.0×)" else "⚡ OVERCLOCK: OFF",
+                        color = if (isOverclocked) FactoryColors.OverclockCyan else FactoryColors.TextPrimary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+        }
+
+        if (activeLayer == GridLayer.FACTORY && showFilterBar) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -167,6 +213,11 @@ private fun toolAccentColor(tool: BuildTool): Color = when (tool) {
     BuildTool.FILTER -> FactoryColors.FilterAccent
     BuildTool.OVERFLOW -> FactoryColors.OverflowAccent
     BuildTool.INCINERATOR -> FactoryColors.IncineratorAccent
+    BuildTool.OVERCLOCK -> FactoryColors.OverclockCyan
+    BuildTool.POWER_CABLE -> FactoryColors.CableCore
+    BuildTool.WIND_TURBINE -> FactoryColors.WindTurbineAccent
+    BuildTool.HYDRO_GENERATOR -> FactoryColors.HydroAccent
+    BuildTool.CAPACITOR_BANK -> FactoryColors.CapacitorAccent
     BuildTool.BULLDOZE -> FactoryColors.BulldozeAccent
 }
 
@@ -209,7 +260,6 @@ private fun DrawScope.drawToolIcon(tool: BuildTool, accent: Color) {
         }
 
         BuildTool.BRIDGE -> {
-            // Underpass horizontal line
             drawLine(
                 color = FactoryColors.BeltTrack,
                 start = Offset(w * 0.08f, cy),
@@ -217,7 +267,6 @@ private fun DrawScope.drawToolIcon(tool: BuildTool, accent: Color) {
                 strokeWidth = h * 0.28f,
                 cap = StrokeCap.Butt
             )
-            // Overpass vertical bridge deck
             drawLine(
                 color = accent,
                 start = Offset(cx, h * 0.08f),
@@ -355,6 +404,119 @@ private fun DrawScope.drawToolIcon(tool: BuildTool, accent: Color) {
                 teeth = 6,
                 fillColor = FactoryColors.AssemblerLight,
                 rimColor = FactoryColors.AssemblerBody
+            )
+        }
+
+        BuildTool.OVERCLOCK -> {
+            drawCircle(
+                color = FactoryColors.OverclockBody,
+                radius = w * 0.40f,
+                center = Offset(cx, cy)
+            )
+            drawCircle(
+                color = accent,
+                radius = w * 0.40f,
+                center = Offset(cx, cy),
+                style = Stroke(width = 2.2f)
+            )
+            val bolt = Path().apply {
+                moveTo(cx + w * 0.06f, cy - h * 0.28f)
+                lineTo(cx - w * 0.18f, cy + h * 0.04f)
+                lineTo(cx + w * 0.02f, cy + h * 0.04f)
+                lineTo(cx - w * 0.06f, cy + h * 0.28f)
+                lineTo(cx + w * 0.18f, cy - h * 0.04f)
+                lineTo(cx - w * 0.02f, cy - h * 0.04f)
+                close()
+            }
+            drawPath(bolt, color = accent)
+        }
+
+        BuildTool.POWER_CABLE -> {
+            drawLine(
+                color = FactoryColors.CableTrack,
+                start = Offset(w * 0.12f, cy),
+                end = Offset(w * 0.88f, cy),
+                strokeWidth = 6f,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = FactoryColors.CableTrack,
+                start = Offset(cx, h * 0.12f),
+                end = Offset(cx, h * 0.88f),
+                strokeWidth = 6f,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = accent,
+                start = Offset(w * 0.12f, cy),
+                end = Offset(w * 0.88f, cy),
+                strokeWidth = 2.6f,
+                cap = StrokeCap.Round
+            )
+            drawLine(
+                color = accent,
+                start = Offset(cx, h * 0.12f),
+                end = Offset(cx, h * 0.88f),
+                strokeWidth = 2.6f,
+                cap = StrokeCap.Round
+            )
+            drawCircle(accent, radius = w * 0.15f, center = Offset(cx, cy))
+        }
+
+        BuildTool.WIND_TURBINE -> {
+            val bladeR = w * 0.36f
+            for (b in 0 until 3) {
+                val rad = (b * 120.0 - 90.0) * PI / 180.0
+                val tip = Offset(
+                    cx + cos(rad).toFloat() * bladeR,
+                    cy + sin(rad).toFloat() * bladeR
+                )
+                drawLine(
+                    color = FactoryColors.WindTurbineBlade,
+                    start = Offset(cx, cy),
+                    end = tip,
+                    strokeWidth = 2.8f,
+                    cap = StrokeCap.Round
+                )
+            }
+            drawCircle(accent, radius = w * 0.13f, center = Offset(cx, cy))
+        }
+
+        BuildTool.HYDRO_GENERATOR -> {
+            drawCircle(
+                color = FactoryColors.HydroBody,
+                radius = w * 0.38f,
+                center = Offset(cx, cy)
+            )
+            drawCircle(
+                color = accent,
+                radius = w * 0.36f,
+                center = Offset(cx, cy),
+                style = Stroke(width = 2.2f)
+            )
+            drawLine(FactoryColors.HydroRotor, Offset(w * 0.24f, cy), Offset(w * 0.76f, cy), strokeWidth = 2.2f, cap = StrokeCap.Round)
+            drawLine(FactoryColors.HydroRotor, Offset(cx, h * 0.24f), Offset(cx, h * 0.76f), strokeWidth = 2.2f, cap = StrokeCap.Round)
+        }
+
+        BuildTool.CAPACITOR_BANK -> {
+            drawRoundRect(
+                color = FactoryColors.CapacitorBody,
+                topLeft = Offset(w * 0.18f, h * 0.14f),
+                size = Size(w * 0.64f, h * 0.72f),
+                cornerRadius = CornerRadius(5f)
+            )
+            drawRoundRect(
+                color = accent,
+                topLeft = Offset(w * 0.18f, h * 0.14f),
+                size = Size(w * 0.64f, h * 0.72f),
+                cornerRadius = CornerRadius(5f),
+                style = Stroke(width = 2.2f)
+            )
+            drawRoundRect(
+                color = FactoryColors.CapacitorCharge,
+                topLeft = Offset(w * 0.28f, h * 0.44f),
+                size = Size(w * 0.44f, h * 0.32f),
+                cornerRadius = CornerRadius(3f)
             )
         }
 

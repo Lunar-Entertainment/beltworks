@@ -79,6 +79,16 @@ private val EXPERT_TIER_FILTERS = listOf(
     TierFilter("126–140 Omega", 126..140)
 )
 
+private val POWER_TIER_FILTERS = listOf(
+    TierFilter("141–145 High Voltage", 141..145)
+)
+
+private enum class MenuMode {
+    STANDARD,
+    EXPERT,
+    POWER
+}
+
 @Composable
 fun MainMenuScreen(
     levels: List<LevelConfig>,
@@ -86,6 +96,7 @@ fun MainMenuScreen(
     continueLevelId: Int,
     highestUnlockedLevelId: Int,
     highestUnlockedExpertLevelId: Int = 81,
+    highestUnlockedPowerLevelId: Int = 141,
     isMusicEnabled: Boolean,
     currentTrackTitle: String,
     onPlayLevel: (Int) -> Unit,
@@ -94,7 +105,15 @@ fun MainMenuScreen(
     onOpenSettings: () -> Unit
 ) {
     var animPhase by remember { mutableFloatStateOf(0f) }
-    var isExpertMode by remember { mutableStateOf(continueLevelId >= 81) }
+    var menuMode by remember {
+        mutableStateOf(
+            when {
+                continueLevelId >= 141 -> MenuMode.POWER
+                continueLevelId >= 81 -> MenuMode.EXPERT
+                else -> MenuMode.STANDARD
+            }
+        )
+    }
     var selectedTierIdx by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) {
@@ -107,21 +126,31 @@ fun MainMenuScreen(
         }
     }
 
-    val modeLevels = remember(levels, isExpertMode) {
-        levels.filter { it.isExpert == isExpertMode }
+    val modeLevels = remember(levels, menuMode) {
+        when (menuMode) {
+            MenuMode.STANDARD -> levels.filter { !it.isExpert && !it.requiresPower }
+            MenuMode.EXPERT -> levels.filter { it.isExpert && !it.requiresPower }
+            MenuMode.POWER -> levels.filter { it.requiresPower }
+        }
     }
-    val tierFilters = if (isExpertMode) EXPERT_TIER_FILTERS else STANDARD_TIER_FILTERS
+    val tierFilters = when (menuMode) {
+        MenuMode.STANDARD -> STANDARD_TIER_FILTERS
+        MenuMode.EXPERT -> EXPERT_TIER_FILTERS
+        MenuMode.POWER -> POWER_TIER_FILTERS
+    }
     val safeTierIdx = selectedTierIdx.coerceIn(0, tierFilters.lastIndex)
 
     val totalStarsEarned = records.values.sumOf { it.bestStars }
     val maxPossibleStars = levels.size * 3
-    val modeUnlockedId = if (isExpertMode) highestUnlockedExpertLevelId else highestUnlockedLevelId
-    val minModeId = modeLevels.firstOrNull()?.id ?: 1
-    val clampedContinueId = if (isExpertMode) {
-        (if (continueLevelId >= 81) continueLevelId else minModeId).coerceIn(minModeId, modeUnlockedId)
-    } else {
-        (if (continueLevelId < 81) continueLevelId else minModeId).coerceIn(minModeId, modeUnlockedId)
+    val modeUnlockedId = when (menuMode) {
+        MenuMode.STANDARD -> highestUnlockedLevelId
+        MenuMode.EXPERT -> highestUnlockedExpertLevelId
+        MenuMode.POWER -> highestUnlockedPowerLevelId
     }
+    val minModeId = modeLevels.firstOrNull()?.id ?: 1
+    val maxModeId = modeLevels.lastOrNull()?.id ?: minModeId
+    val clampedContinueId = (if (continueLevelId in minModeId..maxModeId) continueLevelId else minModeId)
+        .coerceIn(minModeId, modeUnlockedId.coerceAtLeast(minModeId))
     val continueLevel = modeLevels.firstOrNull { it.id == clampedContinueId } ?: modeLevels.first()
     val filteredLevels = modeLevels.filter { it.id in tierFilters[safeTierIdx].range }
 
@@ -232,10 +261,10 @@ fun MainMenuScreen(
                     )
                 ) {
                     Text(
-                        text = if (isExpertMode) {
-                            "EXPERT LVL ${continueLevel.id}: ${continueLevel.name.uppercase()}"
-                        } else {
-                            "PLAY LVL ${continueLevel.id}: ${continueLevel.name.uppercase()}"
+                        text = when (menuMode) {
+                            MenuMode.EXPERT -> "EXPERT LVL ${continueLevel.id}: ${continueLevel.name.uppercase()}"
+                            MenuMode.POWER -> "⚡ LVL ${continueLevel.id}: ${continueLevel.name.uppercase()}"
+                            MenuMode.STANDARD -> "PLAY LVL ${continueLevel.id}: ${continueLevel.name.uppercase()}"
                         },
                         fontSize = 13.sp,
                         fontWeight = FontWeight.ExtraBold,
@@ -331,7 +360,7 @@ fun MainMenuScreen(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // Standard / Expert Mode Switcher
+        // Standard / Expert / High Voltage Mode Switcher
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -341,14 +370,14 @@ fun MainMenuScreen(
                 .padding(4.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            val stdSelected = !isExpertMode
+            val stdSelected = menuMode == MenuMode.STANDARD
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
                     .background(if (stdSelected) FactoryColors.BeltChevron else FactoryColors.GridCell)
                     .clickable {
-                        isExpertMode = false
+                        menuMode = MenuMode.STANDARD
                         selectedTierIdx = 0
                     }
                     .padding(vertical = 8.dp),
@@ -357,30 +386,51 @@ fun MainMenuScreen(
                 Text(
                     text = "STANDARD (80)",
                     color = if (stdSelected) FactoryColors.Background else FactoryColors.TextSecondary,
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.8.sp
+                    letterSpacing = 0.6.sp
                 )
             }
-            val expSelected = isExpertMode
+            val expSelected = menuMode == MenuMode.EXPERT
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(8.dp))
                     .background(if (expSelected) FactoryColors.BeltChevron else FactoryColors.GridCell)
                     .clickable {
-                        isExpertMode = true
+                        menuMode = MenuMode.EXPERT
                         selectedTierIdx = 0
                     }
                     .padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "EXPERT · NO HELP (60)",
+                    text = "EXPERT (60)",
                     color = if (expSelected) FactoryColors.Background else FactoryColors.BeltChevron,
-                    fontSize = 11.sp,
+                    fontSize = 10.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.8.sp
+                    letterSpacing = 0.6.sp
+                )
+            }
+            val pwrSelected = menuMode == MenuMode.POWER
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (pwrSelected) FactoryColors.CableCore else FactoryColors.GridCell)
+                    .clickable {
+                        menuMode = MenuMode.POWER
+                        selectedTierIdx = 0
+                    }
+                    .padding(vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "⚡ POWER (5)",
+                    color = if (pwrSelected) FactoryColors.Background else FactoryColors.CableCore,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 0.6.sp
                 )
             }
         }
@@ -395,10 +445,10 @@ fun MainMenuScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (isExpertMode) {
-                    "EXPERT CONTRACTS (${modeLevels.size})"
-                } else {
-                    "FACTORY CONTRACTS (${modeLevels.size})"
+                text = when (menuMode) {
+                    MenuMode.EXPERT -> "EXPERT CONTRACTS (${modeLevels.size})"
+                    MenuMode.POWER -> "WORLD 5: HIGH VOLTAGE (${modeLevels.size})"
+                    MenuMode.STANDARD -> "FACTORY CONTRACTS (${modeLevels.size})"
                 },
                 color = FactoryColors.TextSecondary,
                 fontSize = 12.sp,
@@ -458,10 +508,10 @@ fun MainMenuScreen(
         ) {
             items(filteredLevels, key = { it.id }) { level ->
                 val record = records[level.id] ?: LevelRecord()
-                val isUnlocked = if (level.isExpert) {
-                    level.id <= highestUnlockedExpertLevelId
-                } else {
-                    level.id <= highestUnlockedLevelId
+                val isUnlocked = when {
+                    level.requiresPower -> level.id <= highestUnlockedPowerLevelId
+                    level.isExpert -> level.id <= highestUnlockedExpertLevelId
+                    else -> level.id <= highestUnlockedLevelId
                 }
                 LevelCard(
                     level = level,

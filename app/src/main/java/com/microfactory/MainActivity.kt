@@ -54,13 +54,14 @@ class MainActivity : ComponentActivity() {
                 var lastPlayedLevelId by remember { mutableIntStateOf(progressStore.getLastPlayedLevelId()) }
                 var records by remember {
                     mutableStateOf(
-                        LevelRepository.levels.associate { it.id to progressStore.getRecord(it.id) }
+                        LevelRepository.allLevels.associate { it.id to progressStore.getRecord(it.id) }
                     )
                 }
 
                 val completedIds = records.filterValues { it.bestStars > 0 }.keys
                 val highestUnlockedStandardId = LevelRepository.highestUnlockedLevelId(completedIds)
                 val highestUnlockedExpertId = LevelRepository.highestUnlockedExpertLevelId(completedIds)
+                val highestUnlockedPowerId = LevelRepository.highestUnlockedPowerLevelId(completedIds)
 
                 // Initialize AdMob SDK on launch when Help Ads are enabled.
                 DisposableEffect(isHelpAdsEnabled) {
@@ -127,7 +128,7 @@ class MainActivity : ComponentActivity() {
                     }
 
                     isSettingsOpen -> {
-                        val allLevelIds = LevelRepository.levels.map { it.id }
+                        val allLevelIds = LevelRepository.allLevels.map { it.id }
                         SettingsScreen(
                             isHelpAdsEnabled = isHelpAdsEnabled,
                             isMusicEnabled = isMusicEnabled,
@@ -139,7 +140,7 @@ class MainActivity : ComponentActivity() {
                             onImportSaveData = { raw ->
                                 progressStore.importSaveData(raw).also { res ->
                                     if (res.isSuccess) {
-                                        records = LevelRepository.levels.associate { it.id to progressStore.getRecord(it.id) }
+                                        records = LevelRepository.allLevels.associate { it.id to progressStore.getRecord(it.id) }
                                         lastPlayedLevelId = progressStore.getLastPlayedLevelId()
                                         isMusicEnabled = progressStore.isMusicEnabled()
                                         isHelpAdsEnabled = progressStore.isHelpAdsEnabled()
@@ -156,11 +157,12 @@ class MainActivity : ComponentActivity() {
 
                     currentLevelId == null -> {
                         MainMenuScreen(
-                            levels = LevelRepository.levels,
+                            levels = LevelRepository.allLevels,
                             records = records,
                             continueLevelId = lastPlayedLevelId,
                             highestUnlockedLevelId = highestUnlockedStandardId,
                             highestUnlockedExpertLevelId = highestUnlockedExpertId,
+                            highestUnlockedPowerLevelId = highestUnlockedPowerId,
                             isMusicEnabled = isMusicEnabled,
                             currentTrackTitle = currentTrackTitle,
                             onPlayLevel = { levelId ->
@@ -180,17 +182,17 @@ class MainActivity : ComponentActivity() {
                         val activeLevel = LevelRepository.getLevel(currentLevelId)
                         FactoryGameScreen(
                             initialLevelId = currentLevelId,
-                            highestUnlockedLevelId = if (activeLevel.isExpert) {
-                                highestUnlockedExpertId
-                            } else {
-                                highestUnlockedStandardId
+                            highestUnlockedLevelId = when {
+                                activeLevel.requiresPower -> highestUnlockedPowerId
+                                activeLevel.isExpert -> highestUnlockedExpertId
+                                else -> highestUnlockedStandardId
                             },
                             isMusicEnabled = isMusicEnabled,
                             isHelpAdsEnabled = isHelpAdsEnabled,
                             onToggleMusic = { toggleMusic(!isMusicEnabled) },
                             onNextTrack = { musicEngine.nextTrack() },
                             onBackToMenu = {
-                                records = LevelRepository.levels.associate { it.id to progressStore.getRecord(it.id) }
+                                records = LevelRepository.allLevels.associate { it.id to progressStore.getRecord(it.id) }
                                 activeLevelId = null
                             },
                             onTileEdited = {
@@ -228,7 +230,7 @@ class MainActivity : ComponentActivity() {
                             onLevelCompleted = { levelId, stars, beltsUsed ->
                                 progressStore.recordCompletion(levelId, stars, beltsUsed)
                                 lastPlayedLevelId = levelId
-                                records = LevelRepository.levels.associate { it.id to progressStore.getRecord(it.id) }
+                                records = LevelRepository.allLevels.associate { it.id to progressStore.getRecord(it.id) }
                                 musicEngine.playVictoryChime()
                             }
                         )

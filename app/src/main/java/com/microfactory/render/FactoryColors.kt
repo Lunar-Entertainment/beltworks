@@ -85,4 +85,35 @@ object FactoryColors {
     val MotorBody = Color(0xFF0EA5E9)
     val MotorCore = Color(0xFFEA580C)
     val MotorShaft = Color(0xFFE2E8F0)
+
+    // Power Layer & Overclock palette
+    val PowerGridCell = Color(0xFF151C2B)
+    val PowerGridBorder = Color(0xFF23304A)
+    val PowerPerimeterCell = Color(0xFF131926)
+    val WindSpotBg = Color(0xFF132D3E)
+    val WindSpotAccent = Color(0xFF38BDF8)
+    val WaterCurrentBg = Color(0xFF0F2942)
+    val WaterCurrentFlow = Color(0xFF0EA5E9)
+    val WaterCurrentFoam = Color(0xFF7DD3FC)
+
+    val CableTrack = Color(0xFF28344B)
+    val CableCore = Color(0xFFFACC15)
+    val CablePulse = Color(0xFFFEF08A)
+    val CableLossAmber = Color(0xFFF59E0B)
+
+    val WindTurbineBody = Color(0xFF1E293B)
+    val WindTurbineBlade = Color(0xFFE2E8F0)
+    val WindTurbineAccent = Color(0xFF38BDF8)
+
+    val HydroBody = Color(0xFF112A45)
+    val HydroAccent = Color(0xFF06B6D4)
+    val HydroRotor = Color(0xFF67E8F9)
+
+    val CapacitorBody = Color(0xFF1B2438)
+    val CapacitorAccent = Color(0xFF10B981)
+    val CapacitorCharge = Color(0xFF34D399)
+
+    val OverclockCyan = Color(0xFF00F0FF)
+    val OverclockBody = Color(0xFF0D2E3A)
+    val BlueprintSilhouette = Color(0xFF38BDF8)
 }

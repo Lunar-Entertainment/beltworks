@@ -49,7 +49,8 @@ sealed interface TileEntity {
         val inputDir: Direction,
         val matchDir: Direction,
         val otherDir: Direction,
-        val filterItem: ItemType = ItemType.IRON_ORE
+        val filterItem: ItemType = ItemType.IRON_ORE,
+        val overclocked: Boolean = false
     ) : TileEntity
 
     /**
@@ -69,21 +70,56 @@ sealed interface TileEntity {
     data class Smelter(
         val inputDir: Direction,
         val outputDir: Direction,
-        val processTicks: Int = 2
+        val processTicks: Int = 2,
+        val overclocked: Boolean = false
     ) : TileEntity
 
     data class Press(
         val inputDir: Direction,
         val outputDir: Direction,
-        val processTicks: Int = 2
+        val processTicks: Int = 2,
+        val overclocked: Boolean = false
     ) : TileEntity
 
     data class Assembler(
         val inputDirA: Direction,
         val inputDirB: Direction,
         val outputDir: Direction,
-        val processTicks: Int = 3
+        val processTicks: Int = 3,
+        val overclocked: Boolean = false
     ) : TileEntity
+
+    fun isPowerConsumer(): Boolean = when (this) {
+        is Smelter, is Press, is Assembler, is Filter -> true
+        else -> false
+    }
+
+    fun isOverclocked(): Boolean = when (this) {
+        is Smelter -> overclocked
+        is Press -> overclocked
+        is Assembler -> overclocked
+        is Filter -> overclocked
+        else -> false
+    }
+
+    fun withOverclock(enabled: Boolean): TileEntity = when (this) {
+        is Smelter -> copy(overclocked = enabled)
+        is Press -> copy(overclocked = enabled)
+        is Assembler -> copy(overclocked = enabled)
+        is Filter -> copy(overclocked = enabled)
+        else -> this
+    }
+
+    fun basePowerDemand(): Float = when (this) {
+        is Smelter -> 4f
+        is Press -> 4f
+        is Assembler -> 6f
+        is Filter -> 2f
+        else -> 0f
+    }
+
+    fun powerDemand(): Float =
+        basePowerDemand() * if (isOverclocked()) 2.5f else 1.0f
 
     fun isPlayerEditable(): Boolean = when (this) {
         is Belt,

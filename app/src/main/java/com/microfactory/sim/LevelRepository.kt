@@ -338,10 +338,15 @@ object LevelRepository {
     val expertLevels: List<LevelConfig> =
         LevelPackExpert1.levels + LevelPackExpert2.levels
 
+    val powerLevels: List<LevelConfig> =
+        LevelPackPower.levels
+
     val levels: List<LevelConfig> = standardLevels + expertLevels
 
+    val allLevels: List<LevelConfig> = standardLevels + expertLevels + powerLevels
+
     fun getLevel(id: Int): LevelConfig =
-        levels.firstOrNull { it.id == id } ?: levels.first()
+        allLevels.firstOrNull { it.id == id } ?: levels.first()
 
     /**
      * Level 1 is always unlocked in Standard Mode. Each subsequent Standard level
@@ -373,17 +378,36 @@ object LevelRepository {
         return highest
     }
 
+    /**
+     * Level 141 is always unlocked in World 5: High Voltage (Power Mode).
+     * Each subsequent Power level unlocks once all preceding Power levels have at least 1 earned star.
+     */
+    fun highestUnlockedPowerLevelId(completedLevelIds: Set<Int>): Int {
+        var highest = powerLevels.first().id
+        val maxId = powerLevels.last().id
+        for (level in powerLevels) {
+            if (level.id <= highest && level.id in completedLevelIds) {
+                highest = (level.id + 1).coerceAtMost(maxId)
+            }
+        }
+        return highest
+    }
+
     fun isLevelUnlocked(levelId: Int, completedLevelIds: Set<Int>): Boolean {
-        val level = levels.firstOrNull { it.id == levelId } ?: return false
-        return if (level.isExpert) {
-            levelId <= highestUnlockedExpertLevelId(completedLevelIds)
-        } else {
-            levelId <= highestUnlockedLevelId(completedLevelIds)
+        val level = allLevels.firstOrNull { it.id == levelId } ?: return false
+        return when {
+            level.requiresPower -> levelId <= highestUnlockedPowerLevelId(completedLevelIds)
+            level.isExpert -> levelId <= highestUnlockedExpertLevelId(completedLevelIds)
+            else -> levelId <= highestUnlockedLevelId(completedLevelIds)
         }
     }
 
     fun nextLevelIdInMode(currentLevel: LevelConfig): Int? {
-        val pool = if (currentLevel.isExpert) expertLevels else standardLevels
+        val pool = when {
+            currentLevel.requiresPower -> powerLevels
+            currentLevel.isExpert -> expertLevels
+            else -> standardLevels
+        }
         val idx = pool.indexOfFirst { it.id == currentLevel.id }
         return if (idx in 0 until pool.lastIndex) pool[idx + 1].id else null
     }

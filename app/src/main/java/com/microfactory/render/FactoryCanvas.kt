@@ -1,5 +1,7 @@
 package com.microfactory.render
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -22,15 +24,28 @@ import androidx.compose.ui.input.pointer.pointerInput
 import com.microfactory.sim.Direction
 import com.microfactory.sim.FactorySimulation
 import com.microfactory.sim.GridCoord
+import com.microfactory.sim.GridLayer
 import com.microfactory.sim.ItemType
+import com.microfactory.sim.MachinePowerState
 import com.microfactory.sim.MachineStatus
+import com.microfactory.sim.PowerTerrainTile
+import com.microfactory.sim.PowerTerrainType
+import com.microfactory.sim.PowerTile
 import com.microfactory.sim.TileEntity
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.min
+import kotlin.math.sin
 
-enum class BuildTool(val label: String, val shortHint: String, val unlockedFromLevel: Int = 1) {
+enum class BuildTool(
+    val label: String,
+    val shortHint: String,
+    val unlockedFromLevel: Int = 1,
+    val isPowerLayerTool: Boolean = false,
+    val requiresPowerLevel: Boolean = false
+) {
     BELT("Belt", "Drag to route & curve belts • Tap to rotate & connect", 1),
     SPLITTER("Splitter", "Alternates items 50/50 left & right • Tap to rotate", 1),
     BRIDGE("Bridge", "Crosses horizontal & vertical lanes without mixing • Tap to rotate", 9),
@@ -40,7 +55,50 @@ enum class BuildTool(val label: String, val shortHint: String, val unlockedFromL
     FILTER("Filter", "Routes matching item to green port • Pick item below", 31),
     OVERFLOW("Overflow", "Prioritizes main port; spills excess when full • Tap to rotate", 45),
     INCINERATOR("Trash", "Destroys unwanted items on contact to prevent jams", 35),
-    BULLDOZE("Bulldoze", "Tap or drag to remove belts & machines", 1)
+    OVERCLOCK(
+        label = "Overclock",
+        shortHint = "Tap Smelter, Press, Assembler, or Filter to toggle 2.0× speed (2.5× ⚡)",
+        unlockedFromLevel = 1,
+        isPowerLayerTool = false,
+        requiresPowerLevel = true
+    ),
+    POWER_CABLE(
+        label = "Cable",
+        shortHint = "Drag or tap to route 4-way cables • >8 tiles loses 10% per 4 tiles",
+        unlockedFromLevel = 1,
+        isPowerLayerTool = true
+    ),
+    WIND_TURBINE(
+        label = "Wind",
+        shortHint = "Generates +3⚡ (+6⚡ on Wind Spot tiles on the perimeter)",
+        unlockedFromLevel = 1,
+        isPowerLayerTool = true
+    ),
+    HYDRO_GENERATOR(
+        label = "Hydro",
+        shortHint = "Generates +8⚡ steady • Must be placed on Water Current river tiles",
+        unlockedFromLevel = 1,
+        isPowerLayerTool = true
+    ),
+    CAPACITOR_BANK(
+        label = "Capacitor",
+        shortHint = "Stores 40⚡ surplus, discharges on deficit & resets cable distance loss",
+        unlockedFromLevel = 1,
+        isPowerLayerTool = true
+    ),
+    BULLDOZE("Bulldoze", "Tap or drag to remove components on active layer", 1);
+
+    fun isVisibleFor(layer: GridLayer, levelId: Int, requiresPower: Boolean): Boolean {
+        if (this == BULLDOZE) return true
+        return when (layer) {
+            GridLayer.FACTORY -> {
+                !isPowerLayerTool &&
+                    levelId >= unlockedFromLevel &&
+                    (!requiresPowerLevel || requiresPower)
+            }
+            GridLayer.POWER -> isPowerLayerTool
+        }
+    }
 }
 
 private data class GridMetrics(
@@ -62,36 +120,71 @@ private data class GridMetrics(
         Offset(originX + coord.x * cellSize, originY + coord.y * cellSize)
 }
 
-private fun computeGridMetrics(canvasSize: Size, gridWidth: Int, gridHeight: Int): GridMetrics {
+private fun computeDualLayerMetrics(
+    canvasSize: Size,
+    factoryWidth: Int,
+    factoryHeight: Int,
+    layerTransition: Float,
+    requiresPower: Boolean
+): Pair<GridMetrics, GridMetrics> {
     val padding = 10f
     val availW = (canvasSize.width - padding * 2f).coerceAtLeast(1f)
     val availH = (canvasSize.height - padding * 2f).coerceAtLeast(1f)
-    val cellSize = min(availW / gridWidth, availH / gridHeight)
-    val totalW = cellSize * gridWidth
-    val totalH = cellSize * gridHeight
-    val originX = (canvasSize.width - totalW) / 2f
-    val originY = (canvasSize.height - totalH) / 2f
-    return GridMetrics(originX, originY, cellSize, gridWidth, gridHeight)
+
+    val powerW = factoryWidth + FactorySimulation.POWER_PERIMETER * 2
+    val powerH = factoryHeight + FactorySimulation.POWER_PERIMETER * 2
+
+    val baseW = if (requiresPower) factoryWidth + 0.9f else factoryWidth.toFloat()
+    val baseH = if (requiresPower) factoryHeight + 0.9f else factoryHeight.toFloat()
+
+    val effectiveW = lerp(baseW, powerW.toFloat(), layerTransition)
+    val effectiveH = lerp(baseH, powerH.toFloat(), layerTransition)
+
+    val cellSize = min(availW / effectiveW, availH / effectiveH)
+    val factoryTotalW = cellSize * factoryWidth
+    val factoryTotalH = cellSize * factoryHeight
+    val factoryOriginX = (canvasSize.width - factoryTotalW) / 2f
+    val factoryOriginY = (canvasSize.height - factoryTotalH) / 2f
+
+    val powerOriginX = factoryOriginX - FactorySimulation.POWER_PERIMETER * cellSize
+    val powerOriginY = factoryOriginY - FactorySimulation.POWER_PERIMETER * cellSize
+
+    val factoryMetrics = GridMetrics(factoryOriginX, factoryOriginY, cellSize, factoryWidth, factoryHeight)
+    val powerMetrics = GridMetrics(powerOriginX, powerOriginY, cellSize, powerW, powerH)
+    return factoryMetrics to powerMetrics
 }
 
 @Composable
 fun FactoryCanvas(
     simulation: FactorySimulation,
+    activeLayer: GridLayer = GridLayer.FACTORY,
     selectedTool: BuildTool,
     selectedFilterItem: ItemType,
     activeFilterCoord: GridCoord?,
+    activeMachineCoord: GridCoord? = null,
     helpRouteCoords: Set<GridCoord> = emptySet(),
     tickAlpha: Float,
     beltPhase: Float,
     renderVersion: Int,
     onBoardChanged: () -> Unit,
     onFilterSelected: (GridCoord?, ItemType?) -> Unit,
+    onMachineSelected: (GridCoord?) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val currentLayer by rememberUpdatedState(activeLayer)
     val currentTool by rememberUpdatedState(selectedTool)
     val currentFilterItem by rememberUpdatedState(selectedFilterItem)
     val currentOnBoardChanged by rememberUpdatedState(onBoardChanged)
     val currentOnFilterSelected by rememberUpdatedState(onFilterSelected)
+    val currentOnMachineSelected by rememberUpdatedState(onMachineSelected)
+
+    val targetZoom = if (simulation.requiresPower && activeLayer == GridLayer.POWER) 1f else 0f
+    val layerTransition by animateFloatAsState(
+        targetValue = targetZoom,
+        animationSpec = tween(durationMillis = 260),
+        label = "powerLayerZoom"
+    )
+    val currentTransition by rememberUpdatedState(layerTransition)
 
     Canvas(
         modifier = modifier
@@ -99,12 +192,16 @@ fun FactoryCanvas(
             .pointerInput(simulation) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    val metrics = computeGridMetrics(
-                        Size(size.width.toFloat(), size.height.toFloat()),
-                        simulation.width,
-                        simulation.height
+                    val (factoryMetrics, powerMetrics) = computeDualLayerMetrics(
+                        canvasSize = Size(size.width.toFloat(), size.height.toFloat()),
+                        factoryWidth = simulation.width,
+                        factoryHeight = simulation.height,
+                        layerTransition = currentTransition,
+                        requiresPower = simulation.requiresPower
                     )
-                    val startCell = metrics.cellAt(down.position) ?: return@awaitEachGesture
+                    val isPowerLayer = simulation.requiresPower && currentLayer == GridLayer.POWER
+                    val activeMetrics = if (isPowerLayer) powerMetrics else factoryMetrics
+                    val startCell = activeMetrics.cellAt(down.position) ?: return@awaitEachGesture
                     down.consume()
 
                     var lastCell = startCell
@@ -112,7 +209,12 @@ fun FactoryCanvas(
                     var prevBeltCell: GridCoord? = null
 
                     if (currentTool == BuildTool.BULLDOZE) {
-                        if (simulation.clearTile(startCell)) {
+                        val cleared = if (isPowerLayer) {
+                            simulation.clearPowerTile(startCell)
+                        } else {
+                            simulation.clearTile(startCell)
+                        }
+                        if (cleared) {
                             currentOnBoardChanged()
                         }
                     }
@@ -128,31 +230,52 @@ fun FactoryCanvas(
                             break
                         }
 
-                        val hovered = metrics.cellAt(change.position)
+                        val hovered = activeMetrics.cellAt(change.position)
                         if (hovered != null && hovered != lastCell) {
                             movedOutOfStart = true
                             val steps = orthogonalStepsBetween(lastCell, hovered)
                             for (nextCell in steps) {
-                                when (currentTool) {
-                                    BuildTool.BELT -> {
-                                        val changed = handleBeltDragStep(
-                                            sim = simulation,
-                                            fromCell = prevBeltCell ?: lastCell,
-                                            toCell = nextCell
-                                        )
-                                        if (changed) {
-                                            currentOnBoardChanged()
+                                if (isPowerLayer) {
+                                    when (currentTool) {
+                                        BuildTool.POWER_CABLE -> {
+                                            var changed = false
+                                            if (simulation.getPowerTile(lastCell) == PowerTile.Empty) {
+                                                changed = simulation.setPowerTile(lastCell, PowerTile.PowerCable()) || changed
+                                            }
+                                            if (simulation.getPowerTile(nextCell) == PowerTile.Empty) {
+                                                changed = simulation.setPowerTile(nextCell, PowerTile.PowerCable()) || changed
+                                            }
+                                            if (changed) currentOnBoardChanged()
                                         }
-                                        prevBeltCell = nextCell
-                                    }
-
-                                    BuildTool.BULLDOZE -> {
-                                        if (simulation.clearTile(nextCell)) {
-                                            currentOnBoardChanged()
+                                        BuildTool.BULLDOZE -> {
+                                            if (simulation.clearPowerTile(nextCell)) {
+                                                currentOnBoardChanged()
+                                            }
                                         }
+                                        else -> Unit
                                     }
+                                } else {
+                                    when (currentTool) {
+                                        BuildTool.BELT -> {
+                                            val changed = handleBeltDragStep(
+                                                sim = simulation,
+                                                fromCell = prevBeltCell ?: lastCell,
+                                                toCell = nextCell
+                                            )
+                                            if (changed) {
+                                                currentOnBoardChanged()
+                                            }
+                                            prevBeltCell = nextCell
+                                        }
 
-                                    else -> Unit
+                                        BuildTool.BULLDOZE -> {
+                                            if (simulation.clearTile(nextCell)) {
+                                                currentOnBoardChanged()
+                                            }
+                                        }
+
+                                        else -> Unit
+                                    }
                                 }
                                 lastCell = nextCell
                             }
@@ -161,42 +284,82 @@ fun FactoryCanvas(
                     }
 
                     if (!movedOutOfStart && currentTool != BuildTool.BULLDOZE) {
-                        val existing = simulation.getTile(startCell)
-                        if (existing.isPlayerEditable()) {
-                            if (simulation.rotateTile(startCell)) {
-                                val updated = simulation.getTile(startCell)
-                                if (updated is TileEntity.Filter) {
-                                    currentOnFilterSelected(startCell, updated.filterItem)
-                                } else {
-                                    currentOnFilterSelected(null, null)
+                        if (isPowerLayer) {
+                            val powerTile = createPowerTileForTool(currentTool)
+                            if (powerTile != null) {
+                                val existingPower = simulation.getPowerTile(startCell)
+                                if (existingPower == PowerTile.Empty || existingPower::class != powerTile::class) {
+                                    if (simulation.setPowerTile(startCell, powerTile)) {
+                                        currentOnBoardChanged()
+                                    }
                                 }
-                                currentOnBoardChanged()
                             }
-                        } else if (existing == TileEntity.Empty) {
-                            val placed = createDefaultTileForTool(
-                                sim = simulation,
-                                coord = startCell,
-                                tool = currentTool,
-                                filterItem = currentFilterItem
-                            )
-                            if (placed != null) {
-                                simulation.setTile(startCell, placed)
-                                if (placed is TileEntity.Filter) {
-                                    currentOnFilterSelected(startCell, placed.filterItem)
-                                } else {
-                                    currentOnFilterSelected(null, null)
+                        } else {
+                            val existing = simulation.getTile(startCell)
+                            if (currentTool == BuildTool.OVERCLOCK) {
+                                if (existing.isPowerConsumer() && simulation.toggleOverclock(startCell)) {
+                                    currentOnMachineSelected(startCell)
+                                    currentOnBoardChanged()
                                 }
-                                val outDir = when (placed) {
-                                    is TileEntity.Belt -> placed.outputDir
-                                    is TileEntity.Smelter -> placed.outputDir
-                                    is TileEntity.Press -> placed.outputDir
-                                    is TileEntity.Assembler -> placed.outputDir
-                                    else -> null
+                            } else if (existing.isPlayerEditable()) {
+                                val cellTopLeft = factoryMetrics.cellTopLeft(startCell)
+                                val localX = down.position.x - cellTopLeft.x
+                                val localY = down.position.y - cellTopLeft.y
+                                val tappedOverclockBadge = simulation.requiresPower &&
+                                    existing.isPowerConsumer() &&
+                                    localX >= factoryMetrics.cellSize * 0.56f &&
+                                    localY <= factoryMetrics.cellSize * 0.44f
+
+                                if (tappedOverclockBadge) {
+                                    if (simulation.toggleOverclock(startCell)) {
+                                        currentOnMachineSelected(startCell)
+                                        currentOnBoardChanged()
+                                    }
+                                } else if (simulation.rotateTile(startCell)) {
+                                    val updated = simulation.getTile(startCell)
+                                    if (updated is TileEntity.Filter) {
+                                        currentOnFilterSelected(startCell, updated.filterItem)
+                                    } else {
+                                        currentOnFilterSelected(null, null)
+                                    }
+                                    if (simulation.requiresPower && updated.isPowerConsumer()) {
+                                        currentOnMachineSelected(startCell)
+                                    } else {
+                                        currentOnMachineSelected(null)
+                                    }
+                                    currentOnBoardChanged()
                                 }
-                                if (outDir != null) {
-                                    simulation.autoConnectDownstreamBelt(startCell, outDir)
+                            } else if (existing == TileEntity.Empty) {
+                                val placed = createDefaultTileForTool(
+                                    sim = simulation,
+                                    coord = startCell,
+                                    tool = currentTool,
+                                    filterItem = currentFilterItem
+                                )
+                                if (placed != null) {
+                                    simulation.setTile(startCell, placed)
+                                    if (placed is TileEntity.Filter) {
+                                        currentOnFilterSelected(startCell, placed.filterItem)
+                                    } else {
+                                        currentOnFilterSelected(null, null)
+                                    }
+                                    if (simulation.requiresPower && placed.isPowerConsumer()) {
+                                        currentOnMachineSelected(startCell)
+                                    } else {
+                                        currentOnMachineSelected(null)
+                                    }
+                                    val outDir = when (placed) {
+                                        is TileEntity.Belt -> placed.outputDir
+                                        is TileEntity.Smelter -> placed.outputDir
+                                        is TileEntity.Press -> placed.outputDir
+                                        is TileEntity.Assembler -> placed.outputDir
+                                        else -> null
+                                    }
+                                    if (outDir != null) {
+                                        simulation.autoConnectDownstreamBelt(startCell, outDir)
+                                    }
+                                    currentOnBoardChanged()
                                 }
-                                currentOnBoardChanged()
                             }
                         }
                     }
@@ -206,130 +369,316 @@ fun FactoryCanvas(
         @Suppress("UNUSED_EXPRESSION")
         renderVersion
 
-        val metrics = computeGridMetrics(size, simulation.width, simulation.height)
-
-        drawRoundRect(
-            color = FactoryColors.SurfaceElevated,
-            topLeft = Offset(metrics.originX - 6f, metrics.originY - 6f),
-            size = Size(metrics.cellSize * simulation.width + 12f, metrics.cellSize * simulation.height + 12f),
-            cornerRadius = CornerRadius(14f)
-        )
-        drawRoundRect(
-            color = FactoryColors.GridOuterFrame,
-            topLeft = Offset(metrics.originX - 6f, metrics.originY - 6f),
-            size = Size(metrics.cellSize * simulation.width + 12f, metrics.cellSize * simulation.height + 12f),
-            cornerRadius = CornerRadius(14f),
-            style = Stroke(width = 2f)
+        val (factoryMetrics, powerMetrics) = computeDualLayerMetrics(
+            canvasSize = size,
+            factoryWidth = simulation.width,
+            factoryHeight = simulation.height,
+            layerTransition = layerTransition,
+            requiresPower = simulation.requiresPower
         )
 
-        // Pass 1: Grid cells, floor machines, and Bridge lower horizontal tracks
-        val bridges = mutableListOf<Pair<GridCoord, TileEntity.Bridge>>()
-        for (y in 0 until simulation.height) {
-            for (x in 0 until simulation.width) {
-                val coord = GridCoord(x, y)
-                val topLeft = metrics.cellTopLeft(coord)
-                val cellPad = metrics.cellSize * 0.045f
-                val innerSize = metrics.cellSize - cellPad * 2f
+        val viewingPowerLayer = simulation.requiresPower && (activeLayer == GridLayer.POWER || layerTransition > 0.5f)
 
-                drawRoundRect(
-                    color = FactoryColors.GridCell,
-                    topLeft = topLeft + Offset(cellPad, cellPad),
-                    size = Size(innerSize, innerSize),
-                    cornerRadius = CornerRadius(metrics.cellSize * 0.12f)
-                )
-                drawRoundRect(
-                    color = if (coord == activeFilterCoord) FactoryColors.FilterAccent else FactoryColors.GridCellBorder,
-                    topLeft = topLeft + Offset(cellPad, cellPad),
-                    size = Size(innerSize, innerSize),
-                    cornerRadius = CornerRadius(metrics.cellSize * 0.12f),
-                    style = Stroke(width = if (coord == activeFilterCoord) 2.2f else 1.2f)
-                )
+        // When level requires power, render the outer/underneath Power Layer context
+        if (simulation.requiresPower) {
+            val powerFrameAlpha = lerp(0.32f, 1.0f, layerTransition)
+            drawRoundRect(
+                color = FactoryColors.PowerPerimeterCell.copy(alpha = powerFrameAlpha),
+                topLeft = Offset(powerMetrics.originX - 6f, powerMetrics.originY - 6f),
+                size = Size(
+                    powerMetrics.cellSize * simulation.powerWidth + 12f,
+                    powerMetrics.cellSize * simulation.powerHeight + 12f
+                ),
+                cornerRadius = CornerRadius(14f)
+            )
+            drawRoundRect(
+                color = FactoryColors.PowerGridBorder.copy(alpha = powerFrameAlpha),
+                topLeft = Offset(powerMetrics.originX - 6f, powerMetrics.originY - 6f),
+                size = Size(
+                    powerMetrics.cellSize * simulation.powerWidth + 12f,
+                    powerMetrics.cellSize * simulation.powerHeight + 12f
+                ),
+                cornerRadius = CornerRadius(14f),
+                style = Stroke(width = 2f)
+            )
 
-                when (val tile = simulation.getTile(coord)) {
-                    TileEntity.Empty -> {
-                        if (coord in helpRouteCoords) {
-                            val center = topLeft + Offset(metrics.cellSize * 0.5f, metrics.cellSize * 0.5f)
-                            drawCircle(
-                                color = FactoryColors.BeltChevron.copy(alpha = 0.22f),
-                                radius = metrics.cellSize * 0.14f,
-                                center = center
-                            )
-                            drawCircle(
-                                color = FactoryColors.BeltChevron.copy(alpha = 0.65f),
-                                radius = metrics.cellSize * 0.065f,
-                                center = center
-                            )
-                        }
+            for (py in 0 until simulation.powerHeight) {
+                for (px in 0 until simulation.powerWidth) {
+                    val pCoord = GridCoord(px, py)
+                    val isPerimeter = simulation.isOuterPerimeter(pCoord)
+                    val cellAlpha = if (viewingPowerLayer) {
+                        1.0f
+                    } else if (isPerimeter) {
+                        0.38f
+                    } else {
+                        0.22f
                     }
-                    TileEntity.Rock -> drawRockTile(topLeft, metrics.cellSize)
-                    is TileEntity.Belt -> drawBeltTile(topLeft, metrics.cellSize, tile, beltPhase)
-                    is TileEntity.Splitter -> drawSplitterTile(topLeft, metrics.cellSize, tile)
-                    is TileEntity.Bridge -> {
-                        drawBridgeUnderpass(topLeft, metrics.cellSize, tile, beltPhase)
-                        bridges.add(coord to tile)
-                    }
-                    is TileEntity.Filter -> drawFilterTile(topLeft, metrics.cellSize, tile)
-                    is TileEntity.Overflow -> drawOverflowTile(topLeft, metrics.cellSize, tile)
-                    TileEntity.Incinerator -> drawIncineratorTile(topLeft, metrics.cellSize)
-                    is TileEntity.Smelter -> drawSmelterTile(topLeft, metrics.cellSize, tile, simulation.getMachineStatus(coord))
-                    is TileEntity.Press -> drawPressTile(topLeft, metrics.cellSize, tile, simulation.getMachineStatus(coord))
-                    is TileEntity.Assembler -> drawAssemblerTile(topLeft, metrics.cellSize, tile, simulation.getMachineStatus(coord))
-                    is TileEntity.Spawner -> drawSpawnerTile(topLeft, metrics.cellSize, tile)
-                    is TileEntity.Hatch -> drawHatchTile(topLeft, metrics.cellSize, tile)
+                    val topLeft = powerMetrics.cellTopLeft(pCoord)
+                    val terrain = simulation.getPowerTerrain(pCoord)
+                    drawPowerCellBackground(
+                        topLeft = topLeft,
+                        cellSize = powerMetrics.cellSize,
+                        terrain = terrain,
+                        isPerimeter = isPerimeter,
+                        beltPhase = beltPhase,
+                        alpha = cellAlpha
+                    )
                 }
             }
         }
 
-        val itemRadius = metrics.cellSize * 0.25f
-        val underpassItems = mutableListOf<com.microfactory.sim.MovingItem>()
-        val normalOrOverpassItems = mutableListOf<com.microfactory.sim.MovingItem>()
-        for (item in simulation.items) {
-            val tile = simulation.getTile(item.currentCoord)
-            if (tile is TileEntity.Bridge && !simulation.isItemOnVerticalBridgeLane(item.id)) {
-                underpassItems.add(item)
-            } else {
-                normalOrOverpassItems.add(item)
+        if (!viewingPowerLayer) {
+            // Factory Layer primary rendering (100% opacity)
+            drawRoundRect(
+                color = FactoryColors.SurfaceElevated,
+                topLeft = Offset(factoryMetrics.originX - 6f, factoryMetrics.originY - 6f),
+                size = Size(
+                    factoryMetrics.cellSize * simulation.width + 12f,
+                    factoryMetrics.cellSize * simulation.height + 12f
+                ),
+                cornerRadius = CornerRadius(14f)
+            )
+            drawRoundRect(
+                color = FactoryColors.GridOuterFrame,
+                topLeft = Offset(factoryMetrics.originX - 6f, factoryMetrics.originY - 6f),
+                size = Size(
+                    factoryMetrics.cellSize * simulation.width + 12f,
+                    factoryMetrics.cellSize * simulation.height + 12f
+                ),
+                cornerRadius = CornerRadius(14f),
+                style = Stroke(width = 2f)
+            )
+
+            // Draw perimeter power tiles dimmed around the Factory frame when on Factory Layer
+            if (simulation.requiresPower) {
+                for (py in 0 until simulation.powerHeight) {
+                    for (px in 0 until simulation.powerWidth) {
+                        val pCoord = GridCoord(px, py)
+                        if (simulation.isOuterPerimeter(pCoord)) {
+                            val pTile = simulation.getPowerTile(pCoord)
+                            if (pTile != PowerTile.Empty) {
+                                drawPowerTileEntity(
+                                    topLeft = powerMetrics.cellTopLeft(pCoord),
+                                    cellSize = powerMetrics.cellSize,
+                                    tile = pTile,
+                                    terrain = simulation.getPowerTerrain(pCoord),
+                                    capacitorCharge = simulation.getCapacitorCharge(pCoord),
+                                    transmissionEfficiency = simulation.getTransmissionEfficiency(pCoord),
+                                    hasMachineAbove = false,
+                                    beltPhase = beltPhase,
+                                    alpha = 0.45f
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Pass 1: Grid cells, floor machines, and Bridge lower horizontal tracks
+            val bridges = mutableListOf<Pair<GridCoord, TileEntity.Bridge>>()
+            for (y in 0 until simulation.height) {
+                for (x in 0 until simulation.width) {
+                    val coord = GridCoord(x, y)
+                    val topLeft = factoryMetrics.cellTopLeft(coord)
+                    val cellPad = factoryMetrics.cellSize * 0.045f
+                    val innerSize = factoryMetrics.cellSize - cellPad * 2f
+
+                    drawRoundRect(
+                        color = FactoryColors.GridCell,
+                        topLeft = topLeft + Offset(cellPad, cellPad),
+                        size = Size(innerSize, innerSize),
+                        cornerRadius = CornerRadius(factoryMetrics.cellSize * 0.12f)
+                    )
+                    val isHighlighted = coord == activeFilterCoord || coord == activeMachineCoord
+                    val highlightColor = when (coord) {
+                        activeFilterCoord -> FactoryColors.FilterAccent
+                        activeMachineCoord -> FactoryColors.OverclockCyan
+                        else -> FactoryColors.GridCellBorder
+                    }
+                    drawRoundRect(
+                        color = highlightColor,
+                        topLeft = topLeft + Offset(cellPad, cellPad),
+                        size = Size(innerSize, innerSize),
+                        cornerRadius = CornerRadius(factoryMetrics.cellSize * 0.12f),
+                        style = Stroke(width = if (isHighlighted) 2.2f else 1.2f)
+                    )
+
+                    // Subtle under-floor power indicator when a cable/capacitor sits underneath this cell
+                    if (simulation.requiresPower) {
+                        val underPowerCoord = simulation.factoryToPower(coord)
+                        val underPowerTile = simulation.getPowerTile(underPowerCoord)
+                        if (underPowerTile != PowerTile.Empty) {
+                            drawPowerTileEntity(
+                                topLeft = topLeft,
+                                cellSize = factoryMetrics.cellSize,
+                                tile = underPowerTile,
+                                terrain = simulation.getPowerTerrain(underPowerCoord),
+                                capacitorCharge = simulation.getCapacitorCharge(underPowerCoord),
+                                transmissionEfficiency = simulation.getTransmissionEfficiency(underPowerCoord),
+                                hasMachineAbove = simulation.getTile(coord).isPowerConsumer(),
+                                beltPhase = beltPhase,
+                                alpha = 0.25f
+                            )
+                        }
+                    }
+
+                    val tile = simulation.getTile(coord)
+                    when (tile) {
+                        TileEntity.Empty -> {
+                            if (coord in helpRouteCoords) {
+                                val center = topLeft + Offset(factoryMetrics.cellSize * 0.5f, factoryMetrics.cellSize * 0.5f)
+                                drawCircle(
+                                    color = FactoryColors.BeltChevron.copy(alpha = 0.22f),
+                                    radius = factoryMetrics.cellSize * 0.14f,
+                                    center = center
+                                )
+                                drawCircle(
+                                    color = FactoryColors.BeltChevron.copy(alpha = 0.65f),
+                                    radius = factoryMetrics.cellSize * 0.065f,
+                                    center = center
+                                )
+                            }
+                        }
+                        TileEntity.Rock -> drawRockTile(topLeft, factoryMetrics.cellSize)
+                        is TileEntity.Belt -> drawBeltTile(topLeft, factoryMetrics.cellSize, tile, beltPhase)
+                        is TileEntity.Splitter -> drawSplitterTile(topLeft, factoryMetrics.cellSize, tile)
+                        is TileEntity.Bridge -> {
+                            drawBridgeUnderpass(topLeft, factoryMetrics.cellSize, tile, beltPhase)
+                            bridges.add(coord to tile)
+                        }
+                        is TileEntity.Filter -> drawFilterTile(topLeft, factoryMetrics.cellSize, tile)
+                        is TileEntity.Overflow -> drawOverflowTile(topLeft, factoryMetrics.cellSize, tile)
+                        TileEntity.Incinerator -> drawIncineratorTile(topLeft, factoryMetrics.cellSize)
+                        is TileEntity.Smelter -> drawSmelterTile(topLeft, factoryMetrics.cellSize, tile, simulation.getMachineStatus(coord))
+                        is TileEntity.Press -> drawPressTile(topLeft, factoryMetrics.cellSize, tile, simulation.getMachineStatus(coord))
+                        is TileEntity.Assembler -> drawAssemblerTile(topLeft, factoryMetrics.cellSize, tile, simulation.getMachineStatus(coord))
+                        is TileEntity.Spawner -> drawSpawnerTile(topLeft, factoryMetrics.cellSize, tile)
+                        is TileEntity.Hatch -> drawHatchTile(topLeft, factoryMetrics.cellSize, tile)
+                    }
+
+                    if ((simulation.requiresPower || tile.isOverclocked()) && tile.isPowerConsumer()) {
+                        drawMachinePowerBadge(
+                            topLeft = topLeft,
+                            cellSize = factoryMetrics.cellSize,
+                            powerState = simulation.getMachinePowerState(coord),
+                            isOverclocked = tile.isOverclocked()
+                        )
+                    }
+                }
+            }
+
+            val itemRadius = factoryMetrics.cellSize * 0.25f
+            val underpassItems = mutableListOf<com.microfactory.sim.MovingItem>()
+            val normalOrOverpassItems = mutableListOf<com.microfactory.sim.MovingItem>()
+            for (item in simulation.items) {
+                val tile = simulation.getTile(item.currentCoord)
+                if (tile is TileEntity.Bridge && !simulation.isItemOnVerticalBridgeLane(item.id)) {
+                    underpassItems.add(item)
+                } else {
+                    normalOrOverpassItems.add(item)
+                }
+            }
+
+            // Pass 2: Underpass items passing beneath Bridge decks
+            for (item in underpassItems) {
+                val ix = lerp(item.prevCoord.x.toFloat(), item.currentCoord.x.toFloat(), tickAlpha)
+                val iy = lerp(item.prevCoord.y.toFloat(), item.currentCoord.y.toFloat(), tickAlpha)
+                val center = Offset(
+                    factoryMetrics.originX + (ix + 0.5f) * factoryMetrics.cellSize,
+                    factoryMetrics.originY + (iy + 0.5f) * factoryMetrics.cellSize
+                )
+                drawItemShape(item.type, center, itemRadius * 0.9f)
+            }
+
+            // Pass 3: Elevated Bridge vertical overpass decks
+            for ((coord, bridge) in bridges) {
+                drawBridgeOverpass(factoryMetrics.cellTopLeft(coord), factoryMetrics.cellSize, bridge, beltPhase)
+            }
+
+            // Pass 4: Consumed glide-in items + active belt/overpass items
+            for (item in simulation.consumedVisualItems) {
+                val ix = lerp(item.prevCoord.x.toFloat(), item.currentCoord.x.toFloat(), tickAlpha)
+                val iy = lerp(item.prevCoord.y.toFloat(), item.currentCoord.y.toFloat(), tickAlpha)
+                val center = Offset(
+                    factoryMetrics.originX + (ix + 0.5f) * factoryMetrics.cellSize,
+                    factoryMetrics.originY + (iy + 0.5f) * factoryMetrics.cellSize
+                )
+                val scale = (1f - tickAlpha * 0.45f).coerceIn(0.4f, 1f)
+                drawItemShape(item.type, center, itemRadius * scale)
+            }
+
+            for (item in normalOrOverpassItems) {
+                val ix = lerp(item.prevCoord.x.toFloat(), item.currentCoord.x.toFloat(), tickAlpha)
+                val iy = lerp(item.prevCoord.y.toFloat(), item.currentCoord.y.toFloat(), tickAlpha)
+                val center = Offset(
+                    factoryMetrics.originX + (ix + 0.5f) * factoryMetrics.cellSize,
+                    factoryMetrics.originY + (iy + 0.5f) * factoryMetrics.cellSize
+                )
+                drawItemShape(item.type, center, itemRadius)
+            }
+        } else {
+            // Power Layer primary rendering:
+            // 1. Inner factory floor boundary outline
+            drawRoundRect(
+                color = FactoryColors.BlueprintSilhouette.copy(alpha = 0.45f),
+                topLeft = Offset(factoryMetrics.originX - 2f, factoryMetrics.originY - 2f),
+                size = Size(
+                    factoryMetrics.cellSize * simulation.width + 4f,
+                    factoryMetrics.cellSize * simulation.height + 4f
+                ),
+                cornerRadius = CornerRadius(10f),
+                style = Stroke(width = 1.8f)
+            )
+
+            // 2. Semi-transparent Factory Layer blueprint silhouettes showing ⚡ draw
+            for (fy in 0 until simulation.height) {
+                for (fx in 0 until simulation.width) {
+                    val fCoord = GridCoord(fx, fy)
+                    val fTile = simulation.getTile(fCoord)
+                    if (fTile != TileEntity.Empty) {
+                        val topLeft = factoryMetrics.cellTopLeft(fCoord)
+                        drawFactoryBlueprintSilhouette(
+                            topLeft = topLeft,
+                            cellSize = factoryMetrics.cellSize,
+                            tile = fTile,
+                            powerState = simulation.getMachinePowerState(fCoord)
+                        )
+                    }
+                }
+            }
+
+            // 3. Full-opacity Power Layer tiles (WindTurbine, HydroGenerator, PowerCable, CapacitorBank)
+            for (py in 0 until simulation.powerHeight) {
+                for (px in 0 until simulation.powerWidth) {
+                    val pCoord = GridCoord(px, py)
+                    val pTile = simulation.getPowerTile(pCoord)
+                    if (pTile != PowerTile.Empty) {
+                        val fCoord = simulation.powerToFactory(pCoord)
+                        val hasMachineAbove = fCoord != null && simulation.getTile(fCoord).isPowerConsumer()
+                        drawPowerTileEntity(
+                            topLeft = powerMetrics.cellTopLeft(pCoord),
+                            cellSize = powerMetrics.cellSize,
+                            tile = pTile,
+                            terrain = simulation.getPowerTerrain(pCoord),
+                            capacitorCharge = simulation.getCapacitorCharge(pCoord),
+                            transmissionEfficiency = simulation.getTransmissionEfficiency(pCoord),
+                            hasMachineAbove = hasMachineAbove,
+                            beltPhase = beltPhase,
+                            alpha = 1.0f
+                        )
+                    }
+                }
             }
         }
-
-        // Pass 2: Underpass items passing beneath Bridge decks
-        for (item in underpassItems) {
-            val ix = lerp(item.prevCoord.x.toFloat(), item.currentCoord.x.toFloat(), tickAlpha)
-            val iy = lerp(item.prevCoord.y.toFloat(), item.currentCoord.y.toFloat(), tickAlpha)
-            val center = Offset(
-                metrics.originX + (ix + 0.5f) * metrics.cellSize,
-                metrics.originY + (iy + 0.5f) * metrics.cellSize
-            )
-            drawItemShape(item.type, center, itemRadius * 0.9f)
-        }
-
-        // Pass 3: Elevated Bridge vertical overpass decks
-        for ((coord, bridge) in bridges) {
-            drawBridgeOverpass(metrics.cellTopLeft(coord), metrics.cellSize, bridge, beltPhase)
-        }
-
-        // Pass 4: Consumed glide-in items + active belt/overpass items
-        for (item in simulation.consumedVisualItems) {
-            val ix = lerp(item.prevCoord.x.toFloat(), item.currentCoord.x.toFloat(), tickAlpha)
-            val iy = lerp(item.prevCoord.y.toFloat(), item.currentCoord.y.toFloat(), tickAlpha)
-            val center = Offset(
-                metrics.originX + (ix + 0.5f) * metrics.cellSize,
-                metrics.originY + (iy + 0.5f) * metrics.cellSize
-            )
-            val scale = (1f - tickAlpha * 0.45f).coerceIn(0.4f, 1f)
-            drawItemShape(item.type, center, itemRadius * scale)
-        }
-
-        for (item in normalOrOverpassItems) {
-            val ix = lerp(item.prevCoord.x.toFloat(), item.currentCoord.x.toFloat(), tickAlpha)
-            val iy = lerp(item.prevCoord.y.toFloat(), item.currentCoord.y.toFloat(), tickAlpha)
-            val center = Offset(
-                metrics.originX + (ix + 0.5f) * metrics.cellSize,
-                metrics.originY + (iy + 0.5f) * metrics.cellSize
-            )
-            drawItemShape(item.type, center, itemRadius)
-        }
     }
+}
+
+private fun createPowerTileForTool(tool: BuildTool): PowerTile? = when (tool) {
+    BuildTool.POWER_CABLE -> PowerTile.PowerCable()
+    BuildTool.WIND_TURBINE -> PowerTile.WindTurbine
+    BuildTool.HYDRO_GENERATOR -> PowerTile.HydroGenerator()
+    BuildTool.CAPACITOR_BANK -> PowerTile.CapacitorBank
+    else -> null
 }
 
 private fun orthogonalStepsBetween(from: GridCoord, to: GridCoord): List<GridCoord> {
@@ -456,6 +805,11 @@ private fun createDefaultTileForTool(
             inputDirB = Direction.EAST,
             outputDir = Direction.SOUTH
         )
+        BuildTool.OVERCLOCK,
+        BuildTool.POWER_CABLE,
+        BuildTool.WIND_TURBINE,
+        BuildTool.HYDRO_GENERATOR,
+        BuildTool.CAPACITOR_BANK,
         BuildTool.BULLDOZE -> null
     }
 }
@@ -479,7 +833,427 @@ private fun directionAngleDeg(dir: Direction): Float = when (dir) {
     Direction.NORTH -> 270f
 }
 
-private fun DrawScope.drawRockTile(topLeft: Offset, cellSize: Float) {
+private fun DrawScope.drawPowerCellBackground(
+    topLeft: Offset,
+    cellSize: Float,
+    terrain: PowerTerrainTile,
+    isPerimeter: Boolean,
+    beltPhase: Float,
+    alpha: Float
+) {
+    val cellPad = cellSize * 0.045f
+    val innerSize = cellSize - cellPad * 2f
+    val baseColor = when (terrain.type) {
+        PowerTerrainType.WIND_SPOT -> FactoryColors.WindSpotBg
+        PowerTerrainType.WATER_CURRENT -> FactoryColors.WaterCurrentBg
+        PowerTerrainType.ROCK -> FactoryColors.PowerGridCell
+        PowerTerrainType.NORMAL -> if (isPerimeter) FactoryColors.PowerPerimeterCell else FactoryColors.PowerGridCell
+    }
+    val borderColor = when (terrain.type) {
+        PowerTerrainType.WIND_SPOT -> FactoryColors.WindSpotAccent.copy(alpha = 0.65f * alpha)
+        PowerTerrainType.WATER_CURRENT -> FactoryColors.WaterCurrentFlow.copy(alpha = 0.7f * alpha)
+        else -> FactoryColors.PowerGridBorder.copy(alpha = alpha)
+    }
+
+    drawRoundRect(
+        color = baseColor.copy(alpha = alpha),
+        topLeft = topLeft + Offset(cellPad, cellPad),
+        size = Size(innerSize, innerSize),
+        cornerRadius = CornerRadius(cellSize * 0.12f)
+    )
+    drawRoundRect(
+        color = borderColor,
+        topLeft = topLeft + Offset(cellPad, cellPad),
+        size = Size(innerSize, innerSize),
+        cornerRadius = CornerRadius(cellSize * 0.12f),
+        style = Stroke(width = 1.1f)
+    )
+
+    when (terrain.type) {
+        PowerTerrainType.WIND_SPOT -> {
+            val cx = topLeft.x + cellSize * 0.5f
+            val cy = topLeft.y + cellSize * 0.5f
+            for (i in -1..1) {
+                val yOff = i * cellSize * 0.20f
+                val slide = ((beltPhase + (i + 1) * 0.33f) % 1f) * 2f - 1f
+                val startX = cx - cellSize * 0.28f + slide * cellSize * 0.06f
+                val endX = cx + cellSize * 0.28f + slide * cellSize * 0.06f
+                drawLine(
+                    color = FactoryColors.WindSpotAccent.copy(alpha = 0.55f * alpha),
+                    start = Offset(startX, cy + yOff),
+                    end = Offset(endX, cy + yOff),
+                    strokeWidth = (cellSize * 0.045f).coerceAtLeast(1.5f),
+                    cap = StrokeCap.Round
+                )
+            }
+        }
+
+        PowerTerrainType.WATER_CURRENT -> {
+            val start = edgeMidpoint(topLeft, cellSize, terrain.flowDir.opposite())
+            val end = edgeMidpoint(topLeft, cellSize, terrain.flowDir)
+            val angle = directionAngleDeg(terrain.flowDir)
+            val dx = end.x - start.x
+            val dy = end.y - start.y
+            for (i in 0 until 2) {
+                val t = (i / 2f + beltPhase) % 1f
+                val pos = Offset(
+                    lerp(start.x, end.x, 0.2f + 0.6f * t),
+                    lerp(start.y, end.y, 0.2f + 0.6f * t)
+                )
+                drawChevron(
+                    center = pos,
+                    angleDeg = angle,
+                    size = cellSize * 0.13f,
+                    color = FactoryColors.WaterCurrentFoam.copy(alpha = 0.65f * alpha)
+                )
+            }
+            // Subtle river wave lines
+            drawLine(
+                color = FactoryColors.WaterCurrentFlow.copy(alpha = 0.35f * alpha),
+                start = Offset(start.x + dx * 0.15f, start.y + dy * 0.15f),
+                end = Offset(start.x + dx * 0.85f, start.y + dy * 0.85f),
+                strokeWidth = cellSize * 0.22f,
+                cap = StrokeCap.Round
+            )
+        }
+
+        PowerTerrainType.ROCK -> {
+            drawRockTile(topLeft, cellSize, alpha = alpha)
+        }
+
+        PowerTerrainType.NORMAL -> Unit
+    }
+}
+
+private fun DrawScope.drawFactoryBlueprintSilhouette(
+    topLeft: Offset,
+    cellSize: Float,
+    tile: TileEntity,
+    powerState: MachinePowerState
+) {
+    val pad = cellSize * 0.13f
+    val inner = cellSize - pad * 2f
+    val center = Offset(topLeft.x + cellSize * 0.5f, topLeft.y + cellSize * 0.5f)
+
+    when (tile) {
+        is TileEntity.Belt, is TileEntity.Bridge -> {
+            drawCircle(
+                color = FactoryColors.BlueprintSilhouette.copy(alpha = 0.16f),
+                radius = cellSize * 0.12f,
+                center = center
+            )
+        }
+        TileEntity.Rock -> {
+            drawRoundRect(
+                color = FactoryColors.RockBase.copy(alpha = 0.22f),
+                topLeft = topLeft + Offset(pad, pad),
+                size = Size(inner, inner),
+                cornerRadius = CornerRadius(cellSize * 0.14f)
+            )
+        }
+        else -> {
+            val isConsumer = tile.isPowerConsumer()
+            val outlineColor = if (isConsumer) {
+                when (powerState) {
+                    MachinePowerState.OVERCLOCKED -> FactoryColors.OverclockCyan
+                    MachinePowerState.POWERED -> FactoryColors.HatchDoneAccent
+                    MachinePowerState.BROWNOUT -> FactoryColors.HatchAccent
+                    MachinePowerState.UNPOWERED -> FactoryColors.BlueprintSilhouette
+                }
+            } else {
+                FactoryColors.TextMuted
+            }
+            drawRoundRect(
+                color = outlineColor.copy(alpha = if (isConsumer) 0.16f else 0.08f),
+                topLeft = topLeft + Offset(pad, pad),
+                size = Size(inner, inner),
+                cornerRadius = CornerRadius(cellSize * 0.16f)
+            )
+            drawRoundRect(
+                color = outlineColor.copy(alpha = if (isConsumer) 0.55f else 0.28f),
+                topLeft = topLeft + Offset(pad, pad),
+                size = Size(inner, inner),
+                cornerRadius = CornerRadius(cellSize * 0.16f),
+                style = Stroke(width = 1.5f)
+            )
+            if (isConsumer) {
+                drawLightningBolt(
+                    center = center,
+                    size = cellSize * 0.24f,
+                    color = outlineColor.copy(alpha = 0.85f)
+                )
+            }
+        }
+    }
+}
+
+private fun DrawScope.drawPowerTileEntity(
+    topLeft: Offset,
+    cellSize: Float,
+    tile: PowerTile,
+    terrain: PowerTerrainTile,
+    capacitorCharge: Float,
+    transmissionEfficiency: Float,
+    hasMachineAbove: Boolean,
+    beltPhase: Float,
+    alpha: Float
+) {
+    val center = Offset(topLeft.x + cellSize * 0.5f, topLeft.y + cellSize * 0.5f)
+
+    when (tile) {
+        PowerTile.Empty -> Unit
+
+        is PowerTile.PowerCable -> {
+            val trackW = cellSize * 0.26f
+            val coreW = cellSize * 0.11f
+            val hasLoss = transmissionEfficiency in 0.01f..0.99f
+            val coreColor = when {
+                transmissionEfficiency <= 0.001f -> FactoryColors.TextMuted
+                hasLoss -> FactoryColors.CableLossAmber
+                else -> FactoryColors.CableCore
+            }.copy(alpha = alpha)
+
+            // Draw connected arms for each of the 4 directions
+            for (dir in Direction.entries) {
+                if (tile.isConnected(dir)) {
+                    val edge = edgeMidpoint(topLeft, cellSize, dir)
+                    drawLine(
+                        color = FactoryColors.CableTrack.copy(alpha = alpha),
+                        start = center,
+                        end = edge,
+                        strokeWidth = trackW,
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = coreColor,
+                        start = center,
+                        end = edge,
+                        strokeWidth = coreW,
+                        cap = StrokeCap.Round
+                    )
+                    if (transmissionEfficiency > 0f) {
+                        val pulsePos = Offset(
+                            lerp(center.x, edge.x, beltPhase),
+                            lerp(center.y, edge.y, beltPhase)
+                        )
+                        drawCircle(
+                            color = FactoryColors.CablePulse.copy(alpha = alpha),
+                            radius = cellSize * 0.065f,
+                            center = pulsePos
+                        )
+                    }
+                }
+            }
+
+            // Center cable hub node
+            drawCircle(
+                color = FactoryColors.CableTrack.copy(alpha = alpha),
+                radius = cellSize * 0.18f,
+                center = center
+            )
+            drawCircle(
+                color = coreColor,
+                radius = cellSize * 0.10f,
+                center = center
+            )
+
+            // Vertical power feed socket when a Layer 0 machine sits directly above this cable
+            if (hasMachineAbove) {
+                drawCircle(
+                    color = FactoryColors.OverclockCyan.copy(alpha = 0.85f * alpha),
+                    radius = cellSize * 0.23f,
+                    center = center,
+                    style = Stroke(width = (cellSize * 0.045f).coerceAtLeast(1.6f))
+                )
+            }
+        }
+
+        PowerTile.WindTurbine -> {
+            val isBoosted = terrain.type == PowerTerrainType.WIND_SPOT
+            val accent = if (isBoosted) FactoryColors.OverclockCyan else FactoryColors.WindTurbineAccent
+            drawMachineChassis(
+                topLeft = topLeft,
+                cellSize = cellSize,
+                bodyColor = FactoryColors.WindTurbineBody.copy(alpha = alpha),
+                accentColor = accent.copy(alpha = alpha)
+            )
+            if (isBoosted) {
+                drawCircle(
+                    color = FactoryColors.OverclockCyan.copy(alpha = 0.22f * alpha),
+                    radius = cellSize * 0.34f,
+                    center = center
+                )
+            }
+            val spinDeg = (beltPhase * 360f * if (isBoosted) 2f else 1f) % 360f
+            val bladeLen = cellSize * 0.32f
+            rotate(degrees = spinDeg, pivot = center) {
+                for (b in 0 until 3) {
+                    val rad = (b * 120.0) * PI / 180.0
+                    val tip = Offset(
+                        center.x + cos(rad).toFloat() * bladeLen,
+                        center.y + sin(rad).toFloat() * bladeLen
+                    )
+                    drawLine(
+                        color = FactoryColors.WindTurbineBlade.copy(alpha = alpha),
+                        start = center,
+                        end = tip,
+                        strokeWidth = (cellSize * 0.075f).coerceAtLeast(2.2f),
+                        cap = StrokeCap.Round
+                    )
+                }
+            }
+            drawCircle(
+                color = accent.copy(alpha = alpha),
+                radius = cellSize * 0.10f,
+                center = center
+            )
+        }
+
+        is PowerTile.HydroGenerator -> {
+            drawMachineChassis(
+                topLeft = topLeft,
+                cellSize = cellSize,
+                bodyColor = FactoryColors.HydroBody.copy(alpha = alpha),
+                accentColor = FactoryColors.HydroAccent.copy(alpha = alpha)
+            )
+            val spinDeg = (beltPhase * 360f) % 360f
+            val wheelR = cellSize * 0.26f
+            drawCircle(
+                color = FactoryColors.HydroAccent.copy(alpha = 0.85f * alpha),
+                radius = wheelR,
+                center = center,
+                style = Stroke(width = (cellSize * 0.055f).coerceAtLeast(2f))
+            )
+            rotate(degrees = spinDeg, pivot = center) {
+                for (p in 0 until 4) {
+                    val rad = (p * 90.0) * PI / 180.0
+                    val p1 = Offset(
+                        center.x - cos(rad).toFloat() * wheelR,
+                        center.y - sin(rad).toFloat() * wheelR
+                    )
+                    val p2 = Offset(
+                        center.x + cos(rad).toFloat() * wheelR,
+                        center.y + sin(rad).toFloat() * wheelR
+                    )
+                    drawLine(
+                        color = FactoryColors.HydroRotor.copy(alpha = alpha),
+                        start = p1,
+                        end = p2,
+                        strokeWidth = (cellSize * 0.055f).coerceAtLeast(1.8f),
+                        cap = StrokeCap.Round
+                    )
+                }
+            }
+            drawCircle(
+                color = FactoryColors.CableCore.copy(alpha = alpha),
+                radius = cellSize * 0.085f,
+                center = center
+            )
+        }
+
+        PowerTile.CapacitorBank -> {
+            drawMachineChassis(
+                topLeft = topLeft,
+                cellSize = cellSize,
+                bodyColor = FactoryColors.CapacitorBody.copy(alpha = alpha),
+                accentColor = FactoryColors.CapacitorAccent.copy(alpha = alpha)
+            )
+            val fillRatio = (capacitorCharge / FactorySimulation.CAPACITOR_MAX_CHARGE).coerceIn(0f, 1f)
+            val barW = cellSize * 0.48f
+            val barH = cellSize * 0.52f
+            val barLeft = center.x - barW * 0.5f
+            val barTop = center.y - barH * 0.5f
+            drawRoundRect(
+                color = FactoryColors.Background.copy(alpha = 0.8f * alpha),
+                topLeft = Offset(barLeft, barTop),
+                size = Size(barW, barH),
+                cornerRadius = CornerRadius(4f)
+            )
+            if (fillRatio > 0f) {
+                val fillH = barH * fillRatio
+                drawRoundRect(
+                    color = FactoryColors.CapacitorCharge.copy(alpha = alpha),
+                    topLeft = Offset(barLeft, barTop + barH - fillH),
+                    size = Size(barW, fillH),
+                    cornerRadius = CornerRadius(4f)
+                )
+            }
+            drawLightningBolt(
+                center = center,
+                size = cellSize * 0.22f,
+                color = FactoryColors.CableCore.copy(alpha = alpha)
+            )
+        }
+
+        PowerTile.Substation -> {
+            drawMachineChassis(
+                topLeft = topLeft,
+                cellSize = cellSize,
+                bodyColor = FactoryColors.PowerGridCell.copy(alpha = alpha),
+                accentColor = FactoryColors.CableCore.copy(alpha = alpha)
+            )
+            drawLightningBolt(
+                center = center,
+                size = cellSize * 0.26f,
+                color = FactoryColors.CableCore.copy(alpha = alpha)
+            )
+        }
+    }
+}
+
+private fun DrawScope.drawMachinePowerBadge(
+    topLeft: Offset,
+    cellSize: Float,
+    powerState: MachinePowerState,
+    isOverclocked: Boolean
+) {
+    val badgeColor = when (powerState) {
+        MachinePowerState.OVERCLOCKED -> FactoryColors.OverclockCyan
+        MachinePowerState.POWERED -> FactoryColors.HatchDoneAccent
+        MachinePowerState.BROWNOUT -> FactoryColors.HatchAccent
+        MachinePowerState.UNPOWERED -> FactoryColors.IncineratorAccent
+    }
+    val badgeCenter = Offset(
+        topLeft.x + cellSize * 0.78f,
+        topLeft.y + cellSize * 0.22f
+    )
+    val badgeRadius = cellSize * 0.14f
+    drawCircle(
+        color = FactoryColors.Background.copy(alpha = 0.92f),
+        radius = badgeRadius,
+        center = badgeCenter
+    )
+    drawCircle(
+        color = if (isOverclocked) FactoryColors.OverclockCyan else badgeColor,
+        radius = badgeRadius,
+        center = badgeCenter,
+        style = Stroke(width = (cellSize * 0.035f).coerceAtLeast(1.4f))
+    )
+    drawLightningBolt(
+        center = badgeCenter,
+        size = badgeRadius * 1.15f,
+        color = badgeColor
+    )
+}
+
+private fun DrawScope.drawLightningBolt(
+    center: Offset,
+    size: Float,
+    color: Color
+) {
+    val path = Path().apply {
+        moveTo(center.x + size * 0.12f, center.y - size * 0.65f)
+        lineTo(center.x - size * 0.36f, center.y + size * 0.06f)
+        lineTo(center.x + size * 0.04f, center.y + size * 0.06f)
+        lineTo(center.x - size * 0.12f, center.y + size * 0.65f)
+        lineTo(center.x + size * 0.36f, center.y - size * 0.06f)
+        lineTo(center.x - size * 0.04f, center.y - size * 0.06f)
+        close()
+    }
+    drawPath(path = path, color = color)
+}
+
+private fun DrawScope.drawRockTile(topLeft: Offset, cellSize: Float, alpha: Float = 1.0f) {
     val pad = cellSize * 0.14f
     val cx = topLeft.x + cellSize / 2f
     val cy = topLeft.y + cellSize / 2f
@@ -493,17 +1267,21 @@ private fun DrawScope.drawRockTile(topLeft: Offset, cellSize: Float) {
         lineTo(cx - r * 0.62f, cy + r * 0.72f)
         close()
     }
-    drawPath(path, color = FactoryColors.RockBase)
-    drawPath(path, color = FactoryColors.RockHighlight, style = Stroke(width = 2f, join = StrokeJoin.Round))
+    drawPath(path, color = FactoryColors.RockBase.copy(alpha = alpha))
+    drawPath(
+        path,
+        color = FactoryColors.RockHighlight.copy(alpha = alpha),
+        style = Stroke(width = 2f, join = StrokeJoin.Round)
+    )
     drawLine(
-        color = FactoryColors.RockShadow,
+        color = FactoryColors.RockShadow.copy(alpha = alpha),
         start = Offset(cx - r * 0.3f, cy - r * 0.2f),
         end = Offset(cx + r * 0.35f, cy + r * 0.3f),
         strokeWidth = 2f,
         cap = StrokeCap.Round
     )
     drawLine(
-        color = FactoryColors.RockShadow,
+        color = FactoryColors.RockShadow.copy(alpha = alpha),
         start = Offset(cx + r * 0.05f, cy + r * 0.05f),
         end = Offset(cx - r * 0.25f, cy + r * 0.45f),
         strokeWidth = 1.6f,
@@ -741,7 +1519,8 @@ private fun DrawScope.drawFilterTile(
     cellSize: Float,
     filter: TileEntity.Filter
 ) {
-    drawMachineChassis(topLeft, cellSize, FactoryColors.FilterBody, FactoryColors.FilterAccent)
+    val accent = if (filter.overclocked) FactoryColors.OverclockCyan else FactoryColors.FilterAccent
+    drawMachineChassis(topLeft, cellSize, FactoryColors.FilterBody, accent)
     drawPortArrow(topLeft, cellSize, filter.inputDir, isOutput = false, color = FactoryColors.TextPrimary)
     drawPortArrow(topLeft, cellSize, filter.matchDir, isOutput = true, color = FactoryColors.HatchDoneAccent)
     drawPortArrow(topLeft, cellSize, filter.otherDir, isOutput = true, color = FactoryColors.HatchAccent)
@@ -796,7 +1575,8 @@ private fun DrawScope.drawSmelterTile(
     smelter: TileEntity.Smelter,
     status: MachineStatus?
 ) {
-    drawMachineChassis(topLeft, cellSize, FactoryColors.SmelterBody, FactoryColors.SmelterAccent)
+    val accent = if (smelter.overclocked) FactoryColors.OverclockCyan else FactoryColors.SmelterAccent
+    drawMachineChassis(topLeft, cellSize, FactoryColors.SmelterBody, accent)
     drawPortArrow(topLeft, cellSize, smelter.inputDir, isOutput = false, color = FactoryColors.TextSecondary)
     drawPortArrow(topLeft, cellSize, smelter.outputDir, isOutput = true, color = FactoryColors.SmelterAccent)
 
@@ -810,7 +1590,7 @@ private fun DrawScope.drawSmelterTile(
     )
     if (status != null && status.progress > 0f) {
         drawArc(
-            color = FactoryColors.GearGold,
+            color = if (smelter.overclocked) FactoryColors.OverclockCyan else FactoryColors.GearGold,
             startAngle = -90f,
             sweepAngle = 360f * status.progress,
             useCenter = false,
@@ -827,7 +1607,8 @@ private fun DrawScope.drawPressTile(
     press: TileEntity.Press,
     status: MachineStatus?
 ) {
-    drawMachineChassis(topLeft, cellSize, FactoryColors.PressBody, FactoryColors.PressAccent)
+    val accent = if (press.overclocked) FactoryColors.OverclockCyan else FactoryColors.PressAccent
+    drawMachineChassis(topLeft, cellSize, FactoryColors.PressBody, accent)
     drawPortArrow(topLeft, cellSize, press.inputDir, isOutput = false, color = FactoryColors.TextSecondary)
     drawPortArrow(topLeft, cellSize, press.outputDir, isOutput = true, color = FactoryColors.PressLight)
 
@@ -856,7 +1637,8 @@ private fun DrawScope.drawAssemblerTile(
     assembler: TileEntity.Assembler,
     status: MachineStatus?
 ) {
-    drawMachineChassis(topLeft, cellSize, FactoryColors.AssemblerBody, FactoryColors.AssemblerAccent)
+    val accent = if (assembler.overclocked) FactoryColors.OverclockCyan else FactoryColors.AssemblerAccent
+    drawMachineChassis(topLeft, cellSize, FactoryColors.AssemblerBody, accent)
     drawPortArrow(
         topLeft, cellSize, assembler.inputDirA, isOutput = false,
         color = if (status?.slotAFilled == true) FactoryColors.IronPlate else FactoryColors.TextSecondary
@@ -881,7 +1663,7 @@ private fun DrawScope.drawAssemblerTile(
     if (status != null && status.progress > 0f) {
         val ringR = cellSize * 0.25f
         drawArc(
-            color = FactoryColors.GearGold,
+            color = if (assembler.overclocked) FactoryColors.OverclockCyan else FactoryColors.GearGold,
             startAngle = -90f,
             sweepAngle = 360f * status.progress,
             useCenter = false,
